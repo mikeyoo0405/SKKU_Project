@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "ecc-memory": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\mikey\\Desktop\\산학\\.agents\\scripts\\memory-mcp.mjs"
+      ],
+      "env": {
+        "ECC_MEMORY_HARNESS": "antigravity"
+      }
+    }
+  }
+}
