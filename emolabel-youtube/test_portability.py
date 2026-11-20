@@ -78,7 +78,7 @@ class PortabilityTests(unittest.TestCase):
 
     def test_mac_preserves_schema(self):
         self.config("darwin", "arm64")
-        from app import asr
+        asr = importlib.import_module("app.asr")
         importlib.reload(asr)
         transcribe = MagicMock(return_value={"segments": [
             {"start": 0, "end": 1, "text": " 좋아. ", "no_speech_prob": 0.0}]})

@@ -1,11 +1,12 @@
 """yt-dlp integration: URL validation, duration probe, download with cache."""
 
 import json
+import math
+import re
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
-
-import yt_dlp
+from tempfile import TemporaryDirectory
+from urllib.parse import parse_qs, urlparse
 
 from . import config, media
 
@@ -25,19 +26,55 @@ def validate_url(url: str) -> None:
         raise YouTubeError(f"Not a YouTube URL (host: {host or 'none'})")
 
 
-def _ydl_opts(download: bool) -> dict:
+class VideoTooLong(YouTubeError):
+    def __init__(self, duration_s: float, limit: float):
+        self.duration_s = duration_s
+        super().__init__(f"Video is {duration_s:.1f}s long; max allowed is {limit:g}s.")
+
+
+def video_id_from_url(url: str) -> str:
+    """Extract a single video ID before allocating workspace or downloading."""
+    try:
+        parsed = urlparse(url)
+        valid_origin = (
+            parsed.scheme in {"http", "https"}
+            and parsed.hostname in ALLOWED_HOSTS
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.port in {None, 443 if parsed.scheme == "https" else 80}
+        )
+    except ValueError as exc:
+        raise YouTubeError("Invalid YouTube URL") from exc
+    if not valid_origin:
+        raise YouTubeError("Expected an HTTP(S) YouTube video URL")
+
+    parts = parsed.path.strip("/").split("/")
+    ids = []
+    if parsed.hostname in {"youtu.be", "www.youtu.be"} and len(parts) == 1:
+        ids = parts
+    elif parsed.hostname not in {"youtu.be", "www.youtu.be"}:
+        if parts == ["watch"]:
+            ids = parse_qs(parsed.query).get("v", [])
+        elif len(parts) == 2 and parts[0] in {"shorts", "embed", "live"}:
+            ids = parts[1:]
+    if len(ids) != 1 or not re.fullmatch(r"[A-Za-z0-9_-]{11}", ids[0]):
+        raise YouTubeError("Expected a single 11-character YouTube video ID")
+    return ids[0]
+
+
+def _ydl_opts(directory: Path | None = None) -> dict:
     opts = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
         "ffmpeg_location": str(Path(config.FFMPEG).parent),
     }
-    if download:
+    if directory is not None:
         opts.update(
             {
                 "format": "bv*[ext=mp4][vcodec^=avc1]+ba[ext=m4a]/b[ext=mp4]/b",
                 "merge_output_format": "mp4",
-                "outtmpl": str(config.DOWNLOADS_DIR / "%(id)s.%(ext)s"),
+                "outtmpl": str(directory / "source.%(ext)s"),
             }
         )
     return opts
@@ -51,59 +88,114 @@ def video_path(video_id: str) -> Path:
     return config.DOWNLOADS_DIR / f"{video_id}.mp4"
 
 
-def load_video(url: str) -> dict:
-    """Download (or reuse cached) video; return metadata dict stored in {id}.info.json."""
+def _load_valid_cache(video_id: str, limit: float) -> dict | None:
+    """Return cached metadata if both files are intact and within the duration limit."""
+    mp4 = video_path(video_id)
+    meta_file = info_path(video_id)
+    if not (mp4.exists() and meta_file.exists()):
+        return None
+    try:
+        cached = json.loads(meta_file.read_text(encoding="utf-8"))
+        cached_duration = float(cached["duration_s"])
+    except (ValueError, KeyError, TypeError, OSError):
+        return None
+    if cached_duration > limit:
+        raise VideoTooLong(cached_duration, limit)
+    if cached.get("video_id") == video_id and 0 < cached_duration and mp4.stat().st_size:
+        return cached
+    return None
+
+
+def load_video(url: str, *, max_duration_s: float | None = None) -> dict:
+    """Use the UI limit by default, or the stricter of UI and batch limits."""
+    import yt_dlp
+
     validate_url(url)
+    expected_id = video_id_from_url(url) if max_duration_s is not None else None
+    limit = config.MAX_VIDEO_DURATION_S
+    if max_duration_s is not None:
+        limit = min(limit, max_duration_s)
+
+    if expected_id is not None:
+        cached = _load_valid_cache(expected_id, limit)
+        if cached is not None:
+            return cached
 
     try:
-        with yt_dlp.YoutubeDL(_ydl_opts(download=False)) as ydl:
+        with yt_dlp.YoutubeDL(_ydl_opts()) as ydl:
             probe_info = ydl.extract_info(url, download=False)
     except yt_dlp.utils.DownloadError as e:
         raise YouTubeError(str(e)) from e
 
-    video_id = probe_info["id"]
+    if not isinstance(probe_info, dict):
+        raise YouTubeError("Unexpected download metadata response")
+    video_id = probe_info.get("id")
+    if (
+        not isinstance(video_id, str)
+        or not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id)
+        or (expected_id and video_id != expected_id)
+    ):
+        raise YouTubeError("Unexpected video ID in download metadata")
     duration = probe_info.get("duration")
-    if duration and duration > config.MAX_VIDEO_DURATION_S:
-        raise YouTubeError(
-            f"Video is {duration:.0f}s long; max allowed is "
-            f"{config.MAX_VIDEO_DURATION_S:.0f}s. This tool targets Shorts."
-        )
+    valid_duration = (
+        isinstance(duration, (int, float))
+        and not isinstance(duration, bool)
+        and math.isfinite(duration)
+        and duration > 0
+    )
+    if max_duration_s is not None and (probe_info.get("is_live") or not valid_duration):
+        raise YouTubeError("Batch requires a finite, known source duration")
+    if valid_duration and duration > limit:
+        raise VideoTooLong(duration, limit)
+
+    cached = _load_valid_cache(video_id, limit)
+    if cached is not None:
+        return cached
 
     mp4 = video_path(video_id)
     meta_file = info_path(video_id)
-    if mp4.exists() and meta_file.exists():
-        return json.loads(meta_file.read_text(encoding="utf-8"))
 
-    try:
-        with yt_dlp.YoutubeDL(_ydl_opts(download=True)) as ydl:
-            ydl.extract_info(url, download=True)
-    except yt_dlp.utils.DownloadError as e:
-        raise YouTubeError(str(e)) from e
+    config.DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=f"{video_id}-", dir=config.DOWNLOADS_DIR) as stage:
+        directory = Path(stage)
+        try:
+            with yt_dlp.YoutubeDL(_ydl_opts(directory)) as ydl:
+                info = ydl.extract_info(url, download=True)
+                downloaded = directory / "source.mp4"
+                if not downloaded.exists():
+                    downloaded = directory / Path(ydl.prepare_filename(info)).name
+        except yt_dlp.utils.DownloadError as e:
+            raise YouTubeError(str(e)) from e
+        if not downloaded.is_file():
+            raise YouTubeError("Download finished but no video was produced")
+        probed = media.probe(downloaded)
+        if probed["duration_s"] > limit:
+            raise VideoTooLong(probed["duration_s"], limit)
+        if probed["video_codec"] != "h264" or downloaded.suffix != ".mp4":
+            converted = directory / "converted.mp4"
+            media.transcode_to_h264(downloaded, converted)
+            downloaded = converted
+            probed = media.probe(downloaded)
+            if probed["duration_s"] > limit:
+                raise VideoTooLong(probed["duration_s"], limit)
 
-    if not mp4.exists():
-        raise YouTubeError("Download finished but no mp4 was produced")
-
-    probed = media.probe(mp4)
-    if probed["video_codec"] != "h264":
-        tmp = mp4.with_suffix(".h264.mp4")
-        media.transcode_to_h264(mp4, tmp)
-        tmp.replace(mp4)
-        probed = media.probe(mp4)
-
-    meta = {
-        "video_id": video_id,
-        "url": probe_info.get("webpage_url") or url,
-        "title": probe_info.get("title"),
-        "channel": probe_info.get("channel") or probe_info.get("uploader"),
-        "duration_s": probed["duration_s"],
-        "width": probed["width"],
-        "height": probed["height"],
-        "fps": probed["fps"],
-        "video_codec": probed["video_codec"],
-        "audio_codec": probed["audio_codec"],
-        "downloaded_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
-    }
-    meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        meta = {
+            "video_id": video_id,
+            "url": probe_info.get("webpage_url") or url,
+            "title": probe_info.get("title"),
+            "channel": probe_info.get("channel") or probe_info.get("uploader"),
+            "duration_s": probed["duration_s"],
+            "width": probed["width"],
+            "height": probed["height"],
+            "fps": probed["fps"],
+            "video_codec": probed["video_codec"],
+            "audio_codec": probed["audio_codec"],
+            "downloaded_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+        }
+        record = directory / "info.json"
+        record.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        downloaded.replace(mp4)
+        record.replace(meta_file)
     return meta
 
 
