@@ -108,6 +108,16 @@ def _speech_segments(audio: np.ndarray, sr: int) -> list[dict]:
         return get_speech_timestamps(torch.from_numpy(audio), model, sampling_rate=sr)
 
 
+def speech_intervals(wav_path: Path) -> list[tuple[float, float]]:
+    """Read the mono 16 kHz source WAV and return VAD boundaries in seconds."""
+    import soundfile as sf
+
+    audio, sr = sf.read(wav_path, dtype="float32")
+    if sr != 16000 or audio.ndim != 1:
+        raise ValueError("Phase 1 VAD requires a mono 16 kHz WAV")
+    return [(span["start"] / sr, span["end"] / sr) for span in _speech_segments(audio, sr)]
+
+
 def _speakers_pyannote(wav_path: Path) -> dict:
     global _pyannote
     with _lock:
