@@ -63,7 +63,6 @@ button.primary:hover:not(:disabled) { background: var(--accent-dark); }
 button.secondary { color: var(--dim); }
 
 .hidden { display: none !important; }
-.legacy-values { display: none; }
 .dim { color: var(--dim); font-size: 12px; }
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -456,6 +455,40 @@ input[type="text"] {
   margin-top: 18px;
 }
 #save-btn { padding: 9px 14px; }
+
+#session-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 10px 18px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+#annotator-id { width: 9em; padding: 6px; }
+select {
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  padding: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.quality-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.quality-grid select { display: block; min-width: 6em; }
+#decision { margin-bottom: 8px; }
+#clip-list button { width: 100%; text-align: left; font-size: 12px; }
+#clip-list button[aria-current="true"] { color: var(--accent-dark); border-color: var(--accent); background: var(--accent-soft); }
+#preview, #history { margin-top: 10px; }
+#preview summary, #history summary { color: var(--accent-dark); cursor: pointer; }
+#cut-video { display: block; max-height: 38vh; max-width: 100%; margin-top: 8px; }
+#cut-audio { width: min(100%, 380px); margin-top: 8px; }
+#history ol { padding-left: 22px; overflow-wrap: anywhere; }
 
 @media (max-width: 1080px) {
   #loader-bar {

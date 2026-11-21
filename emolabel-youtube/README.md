@@ -66,6 +66,19 @@ uv run python -m unittest -v test_portability
 
 8000 포트 사용 중이면 실행 중인 서버의 작업을 먼저 확인하고, 별도 시험은 `--port 8001`로 실행해 http://127.0.0.1:8001 에 접속하세요. 다른 사람이 쓰는 프로세스를 무작정 종료하지 않습니다. 인증이 없는 로컬 도구이므로 외부 공개를 위해 `--host 0.0.0.0`으로 바꾸지 마세요.
 
+## 배치 후보 검수
+
+기존 Phase 1 데이터를 사용하던 Ubuntu의 같은 폴더에서 실행합니다.
+
+```bash
+uv run python -m tools.run_batch --video-workers 1
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+브라우저에서 검수자 ID를 입력하고 **세션 시작 → 배치 후보 검수**를 선택합니다. 일반 후보와 품질 플래그가 있는 후보를 각각 확인하세요. 원본 파형에서 경계를 조정하고 추출된 영상과 16 kHz 음성을 재생할 수 있습니다. 채택할 때 대사·감정·품질을 확인하고, 보류·제외할 때 사유를 입력합니다. 처리한 후보는 검수 이력에서 다시 열 수 있습니다.
+
+후보 파일은 `data/workspace/{video_id}/clips/{clip_id}/`, 검수 이력은 같은 영상 폴더의 `reviews.json`에 있습니다. 채택 후 철회한 출력은 해당 작업 공간의 `quarantine/`에 보관됩니다.
+
 ## 작업 및 저장
 
 URL 불러오기 → 파형에서 발화 선택 → 구간 추출 → 원음과 전사 확인 → 감정·품질 메모·본인 ID → 저장 순서입니다. 전사와 QC는 보조 정보이며 감정을 자동 확정하지 않습니다.
@@ -78,7 +91,7 @@ data/output/{clip_id}/
   annotation.json     # 사람 저장 완료 후 생성
 ```
 
-정답은 `labels.emotion`과 `labels.transcript`입니다. `prelabels`는 기계 초안입니다. valence/arousal은 이번 단계에서 평가하지 않으며, 저장된 기본값 4를 평정값으로 분석하면 안 됩니다. Notes 기본값도 검수 완료 표시가 아니므로 매 샘플 직접 확인합니다.
+정답은 `labels.emotion`과 `labels.transcript`입니다. `prelabels`는 기계 초안입니다. valence/arousal은 이번 단계에서 평가하지 않으며, 저장된 기본값 4를 평정값으로 분석하면 안 됩니다. 새 검수에서는 CONF·QUALITY·AMBIG를 직접 선택합니다.
 
 진행상황·누락 점검:
 
@@ -88,7 +101,7 @@ uv run python tools/dataset_status.py --root data/output
 
 ## 공용 PC와 제출
 
-한 번에 한 사람씩 작업합니다. 같은 브라우저는 이전 annotator ID를 기억하므로 교대 시 반드시 변경하세요. 각자의 별도 복사본에서 작업하거나 `.env`의 `EMOLABEL_DATA_DIR`에 서로 다른 **절대 경로**를 지정하세요. 모델 캐시만 공유하려면 `EMOLABEL_HF_HOME`을 공용 경로로 설정할 수 있지만, data/output은 분리합니다.
+한 번에 한 사람씩 작업합니다. 교대 시 새 세션을 시작하고 본인의 검수자 ID를 입력하세요. 각자의 별도 복사본에서 작업하거나 `.env`의 `EMOLABEL_DATA_DIR`에 서로 다른 **절대 경로**를 지정하세요. 모델 캐시만 공유하려면 `EMOLABEL_HF_HOME`을 공용 경로로 설정할 수 있지만, data/output은 분리합니다.
 
 작업 종료 후 각자의 output을 `날짜_annotatorID` 폴더 아래 압축해 전달합니다. 병합 담당자는 같은 clip_id가 있으면 파일을 덮어쓰지 말고 대사·라벨 차이를 확인합니다. 서버로 자동 수집되지는 않습니다.
 

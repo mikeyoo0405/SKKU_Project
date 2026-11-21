@@ -1,19 +1,35 @@
-"""Clip output layout: data/output/{clip_id}/ with clip.mp4, audio_16k.wav, prelabels.json, annotation.json."""
+"""Storage for the manual workflow and the shared final annotation format."""
 
 import json
 import os
 import re
 import shutil
+import sqlite3
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from . import config
+from . import config, media
 
 CLIP_ID_RE = re.compile(r"^(?P<video_id>[A-Za-z0-9_-]{6,})_(?P<start_ms>\d{7,})_(?P<end_ms>\d{7,})$")
 
 
 class StoreError(RuntimeError):
-    pass
+    status_code = 400
+
+
+class ClipConflict(StoreError):
+    status_code = 409
+
+
+class ClipNotFound(StoreError):
+    status_code = 404
+
+
+def is_lock_conflict(error: sqlite3.OperationalError) -> bool:
+    # Extended result codes retain the primary SQLite code in the low byte.
+    return (getattr(error, "sqlite_errorcode", 0) & 0xff) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
 
 
 def make_clip_id(video_id: str, start_s: float, end_s: float) -> str:
@@ -21,8 +37,8 @@ def make_clip_id(video_id: str, start_s: float, end_s: float) -> str:
 
 
 def parse_clip_id(clip_id: str) -> dict:
-    m = CLIP_ID_RE.match(clip_id)
-    if not m:
+    m = CLIP_ID_RE.fullmatch(clip_id)
+    if not m or len(clip_id) > 150 or len(m["start_ms"]) > 15 or len(m["end_ms"]) > 15:
         raise StoreError(f"Invalid clip id: {clip_id}")
     return {
         "video_id": m["video_id"],
@@ -36,12 +52,91 @@ def clip_dir(clip_id: str) -> Path:
     return config.OUTPUT_DIR / clip_id
 
 
+def _draft_dir(clip_id: str) -> Path:
+    return config.DATA_DIR / "workspace" / parse_clip_id(clip_id)["video_id"] / "manual" / clip_id
+
+
+def _read_dir(clip_id: str) -> Path:
+    final = clip_dir(clip_id)
+    if final.exists():
+        return final
+    draft = _draft_dir(clip_id)
+    # If a worker stopped between the two renames during an overwrite, keep
+    # the previous complete draft readable until the next edit restores it.
+    previous = draft.with_suffix(".previous")
+    return previous if not draft.exists() and previous.exists() else draft
+
+
+@contextmanager
+def manual_edit(clip_id: str, *, allow_confirmed: bool = False, discard_draft: bool = False):
+    """Serialize manual edits with batch processing and human decisions."""
+    from . import review
+
+    draft = _draft_dir(clip_id)
+    folder = draft.parent.parent
+    draft.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(folder / "lock.sqlite", timeout=30)) as lock:
+        try:
+            lock.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as exc:
+            if not is_lock_conflict(exc):
+                raise
+            raise ClipConflict("배치 또는 다른 검수가 진행 중입니다. 잠시 후 다시 시도하세요.") from exc
+        if review.owns_candidate_locked(folder, clip_id) and not discard_draft:
+            raise ClipConflict("배치 후보는 검수 큐에서 수정하세요.")
+        final = clip_dir(clip_id)
+        if (final / "annotation.json").exists():
+            if not allow_confirmed or (read_annotation(clip_id).get("review") or {}).get("origin") == "batch_review":
+                raise ClipConflict("이미 확정된 클립입니다.")
+            yield final
+            return
+        previous = draft.with_suffix(".previous")
+        if previous.exists():
+            if draft.exists():
+                shutil.rmtree(previous)
+            else:
+                previous.rename(draft)
+        if final.exists():
+            if draft.exists():
+                raise ClipConflict("기존 추출본과 작업 중인 추출본이 모두 존재합니다.")
+            final.rename(draft)
+        yield draft
+
+
+def require_media(directory: Path) -> None:
+    for name in ("clip.mp4", "audio_16k.wav"):
+        path = directory / name
+        if not path.is_file() or not path.stat().st_size:
+            raise ClipNotFound(f"Missing or empty {name}; extract the clip first")
+
+
+def extract_draft(clip_id: str, source: Path, overwrite: bool) -> None:
+    segment = parse_clip_id(clip_id)
+    with manual_edit(clip_id) as draft:
+        if draft.exists() and not overwrite:
+            raise ClipConflict(f"Clip {clip_id} already exists")
+        with TemporaryDirectory(dir=draft.parent) as temporary:
+            ready = Path(temporary) / "ready"
+            ready.mkdir()
+            start = segment["start_s"]
+            duration = segment["end_s"] - start
+            media.cut_clip(source, ready / "clip.mp4", start, duration)
+            media.extract_wav16k(source, ready / "audio_16k.wav", start, duration)
+            require_media(ready)
+            previous = draft.with_suffix(".previous")
+            if draft.exists():
+                draft.rename(previous)
+            ready.rename(draft)
+            if previous.exists():
+                shutil.rmtree(previous)
+
+
 def clip_video_path(clip_id: str) -> Path:
-    return clip_dir(clip_id) / "clip.mp4"
+    return _read_dir(clip_id) / "clip.mp4"
 
 
 def clip_wav_path(clip_id: str) -> Path:
-    return clip_dir(clip_id) / "audio_16k.wav"
+    return _read_dir(clip_id) / "audio_16k.wav"
 
 
 def _atomic_write_json(path: Path, obj: dict) -> None:
@@ -51,11 +146,11 @@ def _atomic_write_json(path: Path, obj: dict) -> None:
 
 
 def write_prelabels(clip_id: str, prelabels: dict) -> None:
-    _atomic_write_json(clip_dir(clip_id) / "prelabels.json", prelabels)
+    _atomic_write_json(_draft_dir(clip_id) / "prelabels.json", prelabels)
 
 
 def read_prelabels(clip_id: str) -> dict | None:
-    p = clip_dir(clip_id) / "prelabels.json"
+    p = _read_dir(clip_id) / "prelabels.json"
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
 
 
@@ -66,9 +161,8 @@ def read_annotation(clip_id: str) -> dict | None:
 
 def save_annotation(clip_id: str, labels: dict, annotator_id: str,
                     source_meta: dict, clip_media: dict) -> dict:
-    d = clip_dir(clip_id)
-    if not (d / "clip.mp4").exists():
-        raise StoreError(f"Clip {clip_id} has no clip.mp4; extract it first")
+    """Caller holds manual_edit(..., allow_confirmed=True) for the whole save."""
+    d = _read_dir(clip_id)
     seg = parse_clip_id(clip_id)
     now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
     existing = read_annotation(clip_id)
@@ -105,7 +199,20 @@ def save_annotation(clip_id: str, labels: dict, annotator_id: str,
             "annotation_saved_at": now,
         },
     }
+    if existing and existing.get("labels") != labels:
+        record["history"] = [*existing.get("history", []), {
+            "labels": existing.get("labels"), "annotator": existing.get("annotator"),
+            "timestamps": existing.get("timestamps"),
+        }]
+    elif existing and "history" in existing:
+        record["history"] = existing["history"]
+    if not (d / "prelabels.json").is_file():
+        _atomic_write_json(d / "prelabels.json", {})
     _atomic_write_json(d / "annotation.json", record)
+    final = clip_dir(clip_id)
+    if d != final:
+        final.parent.mkdir(parents=True, exist_ok=True)
+        d.rename(final)
     return record
 
 
@@ -123,22 +230,19 @@ def clip_summary(clip_id: str) -> dict:
 
 
 def list_clips(video_id: str | None = None) -> list[dict]:
-    out = []
-    for d in sorted(config.OUTPUT_DIR.iterdir()) if config.OUTPUT_DIR.exists() else []:
-        if not d.is_dir() or not CLIP_ID_RE.match(d.name):
-            continue
-        if not (d / "clip.mp4").exists():
-            continue  # aborted extraction leftovers
-        if video_id and not d.name.startswith(f"{video_id}_"):
-            continue
-        out.append(clip_summary(d.name))
-    return out
+    ids = set()
+    workspace = config.DATA_DIR / "workspace"
+    for folder in (config.OUTPUT_DIR, *workspace.glob("*/manual")):
+        for d in folder.iterdir() if folder.is_dir() else ():
+            name = d.name.removesuffix(".previous") if folder != config.OUTPUT_DIR else d.name
+            match = CLIP_ID_RE.fullmatch(name)
+            if match and (not video_id or match["video_id"] == video_id) and (d / "clip.mp4").is_file():
+                ids.add(name)
+    return [clip_summary(clip_id) for clip_id in sorted(ids)]
 
 
 def delete_clip(clip_id: str) -> None:
-    d = clip_dir(clip_id)
-    if not d.exists():
-        raise StoreError(f"No such clip: {clip_id}")
-    if (d / "annotation.json").exists():
-        raise StoreError(f"Clip {clip_id} is annotated; refusing to delete")
-    shutil.rmtree(d)
+    with manual_edit(clip_id, discard_draft=True) as draft:
+        if not draft.is_dir():
+            raise ClipNotFound(f"No such clip: {clip_id}")
+        shutil.rmtree(draft)
