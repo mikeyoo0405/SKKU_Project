@@ -29,7 +29,7 @@ class CandidateTests(unittest.TestCase):
         rows = self.select("pilot_00001", 3, [segment(0, 4)],
                                  [(1, 1.5), (2.3, 3.5)])
         self.assertEqual((rows[0]["start_s"], rows[0]["end_s"]), (0, 3))
-        self.assertEqual(rows[0]["quality_flags"], ["multiple_speech_intervals"])
+        self.assertEqual(rows[0]["quality_flags"], ["low_speech_ratio", "multiple_speech_intervals"])
         self.assertEqual(rows[0]["speaker_status"], "unverified")
 
     def test_vad_converts_sample_offsets_to_seconds(self):
@@ -43,3 +43,12 @@ class CandidateTests(unittest.TestCase):
     def test_partial_vad_keeps_full_transcript_interval(self):
         row, = self.select("pilot_00001", 10, [segment(0, 10)], [(8, 9)])
         self.assertEqual((row["start_s"], row["end_s"]), (0, 10))
+        self.assertIn("long_edge_silence", row["quality_flags"])
+        self.assertIn("low_speech_ratio", row["quality_flags"])
+
+    def test_three_clear_utterances_outrank_silent_pilot_segment(self):
+        bounds = [(1, 4), (5, 9), (10, 15)]
+        segments = [segment(*pair) for pair in [*bounds, (105.30, 113.96)]]
+        speech = [*bounds, (112.30, 113.96)]
+        rows = self.select("pilot_00001", 179, segments, speech)
+        self.assertEqual([row["start_s"] for row in rows], [10, 5, 1])

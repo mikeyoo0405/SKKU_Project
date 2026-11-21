@@ -1,6 +1,7 @@
-"""Phase 1 pilot. From emolabel-youtube: uv run python -m tools.run_batch --help."""
+"""Prepare playable review candidates. Run with python -m tools.run_batch --help."""
 import argparse
 import json
+import math
 import re
 import sqlite3
 import sys
@@ -9,7 +10,7 @@ from contextlib import closing
 from pathlib import Path
 from time import perf_counter
 
-from app import asr, candidates, config, media, qc, youtube
+from app import asr, candidate_media, candidates, config, media, qc, youtube
 
 PILOT_IDS = ("DGwuCn-EDfQ", "mKwJDo0YTkM", "6yrnO_6Hl0I")
 MAX_SECONDS = 180
@@ -42,10 +43,17 @@ def _current_settings():
     ]
 
 
+def _valid_source_meta(meta, video_id):
+    if not isinstance(meta, dict) or meta.get("video_id") != video_id:
+        return False
+    duration = meta.get("duration_s")
+    return type(duration) in (int, float) and math.isfinite(duration) and duration > 0
+
+
 def _ensure_source(url, folder, source, timings):
     meta_path = folder / "source.json"
     meta = read_json_or_none(meta_path) if source.is_file() else None
-    if isinstance(meta, dict) and "duration_s" in meta:
+    if _valid_source_meta(meta, folder.name):
         return meta
     started = perf_counter()
     meta = youtube.load_video(url, max_duration_s=MAX_SECONDS)
@@ -91,6 +99,29 @@ def _ensure_asr(wav, folder, timings):
     return transcript
 
 
+def _finish_candidate_media(state, folder, source):
+    """Also upgrades completed Phase 1 checkpoints without repeating inference."""
+    started = perf_counter()
+    try:
+        ids = [row["clip_id"] for row in state["candidates"]]
+        missing = [key for key in ids if not candidate_media.media_ready(folder, key, source)]
+        if not missing and state["status"] == "completed":
+            return {**state, "cached": True}
+        for key in missing:
+            candidate_media.ensure_media(folder, key, source)
+        state.update(status="completed")
+        state.pop("stage", None)
+        state.pop("reason", None)
+    except Exception as error:
+        state.update(status="failed", stage="candidate_media", reason=str(error))
+    seconds = state.setdefault("seconds", {})
+    if not isinstance(seconds, dict):
+        seconds = state["seconds"] = {}
+    seconds["candidate_media"] = perf_counter() - started
+    write_json(folder / "state.json", state)
+    return state
+
+
 def run_video(video_id, workspace):
     started = perf_counter()
     if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
@@ -114,10 +145,20 @@ def process_video(video_id, folder):
     stamp = source.stat() if source.is_file() else None
     source_stamp = [stamp.st_size, stamp.st_mtime_ns] if stamp else None
     reuse = state.get("settings") == settings and state.get("source_stamp") == source_stamp
-    if reuse and (state.get("status") == "excluded" or (
-        state.get("status") in {"completed", "no_candidates"} and source_stamp
-    )):
+    status = state.get("status")
+    if reuse and (
+        status == "excluded" or (
+            status == "no_candidates" and source_stamp
+            and state.get("selection_version") == candidates.SELECTION_VERSION
+        )
+    ):
         return {**state, "cached": True}
+    if reuse and state.get("selection_version") == candidates.SELECTION_VERSION and source_stamp and state.get("candidates") and (
+        status in {"completed", "candidates_ready"} or
+        (status == "failed" and state.get("stage") == "candidate_media")
+    ):
+        if _valid_source_meta(read_json_or_none(folder / "source.json"), video_id):
+            return _finish_candidate_media(state, folder, source)
 
     if not reuse:
         for name in ("source.json", "source.wav", "asr.json", "vad.json"):
@@ -137,6 +178,9 @@ def process_video(video_id, folder):
         meta = _ensure_source(url, folder, source, timings)
         duration = meta["duration_s"]
         stamp = source.stat()
+        if reuse and source_stamp != [stamp.st_size, stamp.st_mtime_ns]:
+            for name in ("source.wav", "vad.json", "asr.json"):
+                (folder / name).unlink(missing_ok=True)
         state.update(duration_s=duration, source_path=str(source), source_stamp=[stamp.st_size, stamp.st_mtime_ns])
         write_json(state_path, state)
 
@@ -153,7 +197,8 @@ def process_video(video_id, folder):
             stage, started = "candidates", perf_counter()
             selected = candidates.select(video_id, duration, transcript["segments"], speech)
             timings[stage] = perf_counter() - started
-        state.update(status="completed" if selected else "no_candidates", candidates=selected)
+        state.update(status="candidates_ready" if selected else "no_candidates", candidates=selected)
+        state["selection_version"] = candidates.SELECTION_VERSION
         if not selected:
             state["reason"] = "no_eligible_segments" if speech else "no_speech"
     except youtube.VideoTooLong as error:
@@ -164,6 +209,8 @@ def process_video(video_id, folder):
     if state["status"] != "failed":
         state.pop("stage", None)
     write_json(state_path, state)
+    if state["status"] == "candidates_ready":
+        return _finish_candidate_media(state, folder, source)
     return state
 
 

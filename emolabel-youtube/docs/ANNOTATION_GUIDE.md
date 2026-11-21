@@ -54,7 +54,7 @@ CONF=2; QUALITY=B; AMBIG=0; SECONDARY=sad; FLAGS=BGM,MIXED
 CONF=1; QUALITY=C; AMBIG=1; SECONDARY=angry; FLAGS=OVERLAP,MIXED
 ```
 
-현재 UI는 첫 번째 예시를 자동으로 채웁니다. **자동 기본값을 검수 완료로 간주하지 말고 매번 직접 확인하세요.** C 또는 AMBIG=1도 앱에서는 저장될 수 있지만 clean 평가 세트와는 분리합니다. CONF=2는 독립 재검수 후 채택 여부를 결정합니다.
+현재 UI에서는 후보별 CONF·QUALITY·AMBIG를 직접 선택합니다. **자동 기본값을 검수 완료로 간주하지 말고 매번 직접 확인하세요.** C 또는 AMBIG=1도 앱에서는 저장될 수 있지만 clean 평가 세트와는 분리합니다. CONF=2는 독립 재검수 후 채택 여부를 결정합니다.
 
 이번 101개 중 34개는 CONF·QUALITY·AMBIG가 기록되지 않았습니다. 미기록을 자동으로 CONF=3/A/0으로 보충하지 않았습니다. 나머지에 기록된 값도 복수 라벨러 검증을 뜻하지 않습니다.
 

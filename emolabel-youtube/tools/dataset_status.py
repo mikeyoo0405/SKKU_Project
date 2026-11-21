@@ -22,17 +22,20 @@ def inspect(root):
             label = item["labels"]["emotion"]
             if label not in LABELS:
                 raise ValueError(f"unknown emotion: {label}")
-            counts[label] += 1
             if item.get("clip_id") != directory.name:
                 issues.append(f"{directory.name}: clip_id mismatch")
             if not item["labels"].get("transcript", "").strip():
                 issues.append(f"{directory.name}: empty transcript")
             if not item.get("annotator", {}).get("id", "").strip():
                 issues.append(f"{directory.name}: missing annotator ID")
+            complete = True
             for name in ("clip.mp4", "audio_16k.wav"):
                 media = directory / name
                 if not media.is_file() or media.stat().st_size == 0:
                     issues.append(f"{directory.name}: missing/empty {name}")
+                    complete = False
+            if complete:
+                counts[label] += 1
         except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
             issues.append(f"{directory.name}: {exc}")
     return counts, pending, issues

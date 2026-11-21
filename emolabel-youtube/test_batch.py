@@ -1,6 +1,7 @@
 """Phase 1 orchestration tests with local files and no network or model downloads."""
 import io
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -32,6 +33,10 @@ class BatchTests(unittest.TestCase):
             run_batch.youtube, "load_video", return_value=metadata
         ))
         self.enterContext(patch.object(run_batch.youtube, "video_path", return_value=source))
+        self.cut = self.enterContext(patch.object(
+            run_batch.media, "cut_clip",
+            side_effect=lambda src, dst, start, duration: dst.write_bytes(b"video")
+        ))
         self.extract = self.enterContext(patch.object(
             run_batch.media, "extract_wav16k",
             side_effect=lambda src, dst, start, duration: dst.write_bytes(b"audio")
@@ -52,6 +57,31 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(result["status"], state["status"])
         return result
 
+    def test_metadata_recovery_reuses_media_and_allows_acceptance(self):
+        from app import review
+
+        row = self.process()["candidates"][0]
+        path = self.workspace / self.video_id / "source.json"
+        for damaged in (None, b"{", b"{}"):
+            if damaged is None:
+                path.unlink()
+            else:
+                path.write_bytes(damaged)
+            result = self.process()
+            self.assertEqual(result["candidates"], [row])
+            self.assertEqual(json.loads(path.read_text("utf-8")), self.download.return_value)
+        self.vad.assert_called_once()
+        self.asr.assert_called_once()
+        self.cut.assert_called_once()
+        self.assertEqual(self.extract.call_count, 2)
+        saved = review.save_decision(row["clip_id"], dict(
+            revision=0, start_s=row["start_s"], end_s=row["end_s"], status="accepted",
+            reason="", annotator_id="tester", transcript=row["transcript"], emotion="happy",
+            confidence=3, quality="A", ambiguous=0, verified=True, active_seconds=5, blind=False,
+        ))
+        self.assertEqual(saved["status"], "accepted")
+        self.assertTrue((self.output / row["clip_id"] / "annotation.json").is_file())
+
     def test_rerun_reuses_candidate_and_preserves_annotation(self):
         first = self.process()
         self.assertEqual(first["status"], "completed")
@@ -64,15 +94,75 @@ class BatchTests(unittest.TestCase):
         again = self.process()
         self.assertEqual(again["candidates"], first["candidates"])
         self.assertEqual(accepted.read_bytes(), b'{"human":true}')
-        for stage in (self.download, self.extract, self.vad, self.asr):
+        for stage in (self.download, self.cut, self.vad, self.asr):
             stage.assert_called_once()
+        self.assertEqual(self.extract.call_count, 2)  # Full source and candidate audio.
+        self.assertTrue(again["cached"])
+
+    def test_old_candidate_ranking_is_refreshed_without_inference(self):
+        first = self.process()
+        path = self.workspace / self.video_id / "state.json"
+        old = json.loads(path.read_text("utf-8"))
+        old.pop("selection_version")
+        old["candidates"][0].pop("speech_ratio")
+        path.write_text(json.dumps(old), encoding="utf-8")
+        again = self.process()
+        self.assertEqual(again["candidates"], first["candidates"])
+        self.assertTrue(self.process()["cached"])
+        self.asr.assert_called_once()
+        self.vad.assert_called_once()
+
+    def test_phase_one_checkpoint_backfills_only_review_media(self):
+        first = self.process()
+        folder = self.workspace / self.video_id
+        if (folder / "clips").exists():
+            shutil.rmtree(folder / "clips")
+        state_path = folder / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["seconds"].pop("candidate_media", None)
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        again = self.process()
+        directory = folder / "clips" / first["candidates"][0]["clip_id"]
+        self.assertEqual((directory / "clip.mp4").read_bytes(), b"video")
+        self.assertEqual((directory / "audio_16k.wav").read_bytes(), b"audio")
+        self.assertFalse(again.get("cached", False))
+        self.assertIn("candidate_media", again["seconds"])
+        self.asr.assert_called_once()
+        self.vad.assert_called_once()
+        self.assertTrue(self.process()["cached"])
+
+    def test_candidate_media_error_retries_without_asr(self):
+        self.cut.side_effect = RuntimeError("video encoder interrupted")
+        failed = self.process()
+        self.assertEqual((failed["status"], failed["stage"]), ("failed", "candidate_media"))
+        clip_id = failed["candidates"][0]["clip_id"]
+        self.assertFalse((self.workspace / self.video_id / "clips" / clip_id / "clip.mp4").exists())
+        self.cut.side_effect = lambda src, dst, start, duration: dst.write_bytes(b"video")
+        self.assertEqual(self.process()["status"], "completed")
+        self.asr.assert_called_once()
+
+    def test_truncated_candidate_audio_is_repaired_using_source_bounds(self):
+        first = self.process()
+        candidate = first["candidates"][0]
+        directory = self.workspace / self.video_id / "clips" / candidate["clip_id"]
+        audio = directory / "audio_16k.wav"
+        audio.write_bytes(b"")
+        again = self.process()
+        self.assertEqual(again["status"], "completed")
+        self.assertFalse(again.get("cached", False))
+        self.assertEqual(audio.read_bytes(), b"audio")
+        for encoder in (self.cut, self.extract):
+            src, _, start, length = encoder.call_args.args
+            self.assertEqual(src, self.batch.youtube.video_path(self.video_id))
+            self.assertEqual((start, length), (candidate["start_s"], candidate["duration_ms"] / 1000))
+        self.asr.assert_called_once()
 
     def test_failed_asr_retries_without_repeating_extraction(self):
         self.asr.side_effect = [RuntimeError("ASR interrupted"), self.transcript]
         self.assertEqual(self.process()["status"], "failed")
         self.assertEqual(self.process()["status"], "completed")
         self.download.assert_called_once()
-        self.extract.assert_called_once()
+        self.assertEqual(self.extract.call_count, 2)
         self.vad.assert_called_once()
         self.assertEqual(self.asr.call_count, 2)
 
@@ -88,7 +178,8 @@ class BatchTests(unittest.TestCase):
         source = self.batch.youtube.video_path(self.video_id)
         source.write_bytes(b"replacement source")
         self.process()
-        self.assertEqual(self.extract.call_count, 2)
+        self.assertEqual(self.extract.call_count, 4)
+        self.assertEqual(self.cut.call_count, 2)
         self.assertEqual(self.asr.call_count, 2)
 
     def test_concurrent_requests_share_one_video_result(self):
@@ -172,6 +263,18 @@ class BatchTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             self.assertEqual(self.batch.main(), 0)
         self.download.assert_called_once()
+
+    def test_candidate_media_backfill_handles_missing_seconds_field(self):
+        self.process()
+        folder = self.workspace / self.video_id
+        state_path = folder / "state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state.pop("seconds", None)
+        state["status"] = "candidates_ready"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        rebuilt = self.process()
+        self.assertEqual(rebuilt["status"], "completed")
+        self.assertIn("candidate_media", rebuilt["seconds"])
 
 
 if __name__ == "__main__":

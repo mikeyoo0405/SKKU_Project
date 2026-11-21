@@ -1,7 +1,7 @@
 # EmoLabel 자동화 구축 계획
 
 - 작성일 2026-11-21 (KST)
-- 현재 단계 · 1단계 배치 구현·Windows 회귀 검증 완료, 사용자 제공 Ubuntu 출력에서 3개 영상 완료·캐시 재사용 확인. 후보 추출·청취 검수 대기
+- 현재 단계 · Ubuntu에서 사용자가 실제 후보의 선택 구간 끝 자동 정지를 확인했다. 현재 경계로 검수를 진행하며, 다음 작업은 3단계 로컬 감정 모델 연결이다. 채택 클립당 검수 시간은 파일럿에서 측정한다.
 - 기준 문서 · 본 문서(단일 기준 문서, 기존 자동화 워크플로우 요구사항 반영), [기존 실행 안내](emolabel-youtube/README.md), [라벨링 가이드](emolabel-youtube/docs/ANNOTATION_GUIDE.md)
 
 ## 목표와 구현 원칙
@@ -15,10 +15,10 @@
 | 단계 | 현재 확인한 구현 | 추가할 기능 |
 | --- | --- | --- |
 | 영상 수집 | URL 목록 배치, 영상 ID 중복 제거, 180초 상한, 진행·실패 기록과 재시도 구현 | worker 1·2 실측 비교 |
-| 후보 선정 | ASR 구간 경계를 보존하고 VAD로 음성 존재를 확인해 길이순 최대 3개 후보의 시각·대사·플래그 저장 | 후보 영상·음성 추출과 검수 화면 연결, 경계 품질 확인 |
+| 후보 선정 | ASR 경계를 보존하고 발화 비율·앞뒤 여백을 평가해 최대 3개를 추출 | 파일럿 경계 품질 확인 |
 | 감정 사전 분류 | `prelabels.json`에 ASR·성별·QC 초안 저장 | 같은 후보에 대한 모델별 감정 제안, 타임아웃·실패·보류 기록 |
-| 사람 검수 | 기존 UI에서 추출 결과와 전사를 보고 사람 라벨을 저장 | 검수 큐, 보류·제외 사유, 단축키, 기본값 오염 방지, 다음 후보 이동, 유휴 제외 작업 시간 |
-| 확정 저장 | `data/output/` 안에 추출물과 확정본이 함께 존재하며 `annotation.json`으로 확정 여부 구분 | 작업 공간과 확정 출력 분리, 상태 전이, 원자적 저장, 경계 수정 이력, 재실행 보호 |
+| 사람 검수 | 후보별 파형·재생, 검수 큐, 사유, 단축키, 독립 검수, 유휴 제외 타이머 | 파일럿 실측 |
+| 확정 저장 | 신규 초안은 작업 공간에 보관하고 채택본만 출력. 경계 수정 이력·철회 격리·재실행 보호 구현 | 기존 자료와 함께 Ubuntu 검증 |
 
 ## 데이터·상태 계약 (구현 공통 기준)
 
@@ -47,7 +47,7 @@
 | --- | --- | --- |
 | 파일럿 URL 목록 버전 | `pilot_v1` (3개 숏츠) | 필요 시 1–2개 추가해 `pilot_v2`로 갱신 |
 | 입력 영상 길이 상한 | `180초` | 장편 유입 시 CPU ASR 정지 방지 |
-| 원본 영상당 최대 후보 수 | `3개` | 유효 후보가 3개를 넘으면 클립 길이가 긴 순으로 3개를 선택하고, 길이가 같으면 시작 시각이 빠른 후보를 우선한다. 파일럿 후 재검토한다. |
+| 원본 영상당 최대 후보 수 | `3개` | VAD 발화 비율 50% 이상이고 양 끝 여백이 각각 1.5초 이하인 후보를 먼저 선택한다. 같은 그룹에서는 3–12초 구간을 우선하고 발화 비율 내림차순, 가장 긴 끝 여백 오름차순, 길이 내림차순, 시작 시각순으로 정렬한다. 파일럿용 임시 기준이다. |
 | 검수 타이머 유휴(idle) 컷오프 | `90초` | 무입력·탭 비활성 시 일시정지 |
 | 모델 최소 품질 기준 | `Macro-F1 ≥ 0.65`, 감정별 재현율 `≥ 0.55`, 최대 보류율 `≤ 20%` | 팀 합의 후 최종 확정 |
 | 모델 건당 타임아웃 | `60초` | WSL2 CPU 기준, 모델 특성에 따라 조정 |
@@ -93,14 +93,12 @@ uv run python -m tools.run_batch --video-workers 1
 
 ## 2단계 · 검수 동선과 확정 저장
 
-- [ ] 선정된 후보를 작업 공간의 영상·16 kHz 음성 파일로 추출하고 기존 검수 화면에서 재생할 수 있도록 연결한다. Phase 1 배치 산출물은 원본 미디어와 후보 시각·대사이며, 후보별 잘린 미디어 생성은 다음 구현이다. 기존 media.cut_clip과 media.extract_wav16k를 재사용한다.
-
-
-- [ ] 기존 재생·파형 UI를 활용한다. 보류·제외 사유 저장, 재생·라벨 단축키, 저장 성공 후 다음 후보 이동부터 구현한다. 저장 실패 시 화면과 선택을 유지한다. 낮은 품질 후보는 별도 큐로 보내고 모델 간 불일치는 검수 우선순위에 활용한다.
-- [ ] 라벨링 가이드의 기본값 오염 방지 원칙을 UI에 반영한다. `CONF`·`QUALITY`·`AMBIG` 자동 기본값을 검수 완료로 간주하지 않도록 명시적 확인(또는 미선택 초기화)을 두고, 공용 PC 환경에 대비해 세션 시작 시 `annotator_id`를 확인한다. `valence/arousal` 기본값 4는 평정값으로 집계하지 않는다.
-- [ ] 검수자가 영상과 원음으로 발화 경계, 화면과 음성의 화자 일치, 대사와 감정을 확인한다. 네 가지 상태, 처리 사유, 검수자 ID, 실제 검수 시간, 최종 대사·감정과 변경 이력을 남긴다. 독립 정답을 작성할 때는 모델 제안을 가린다.
-- [ ] 작업 시간 타이머는 탭 비활성·자리 비움 시 합의한 유휴(idle) 컷오프로 일시정지해 측정 왜곡을 막는다.
-- [ ] 데이터·상태 계약에 따라 작업 공간과 최종 출력을 분리하고, 원자적 커밋과 상태 전이(`superseded`, 확정 후 철회 시 격리)를 구현한다. 기존 확정본은 기존 경로와 형식으로 읽을 수 있게 한다.
+- [x] 선정된 후보를 작업 공간의 영상·16 kHz 음성 파일로 추출하고 기존 검수 화면에서 재생할 수 있도록 연결한다. Phase 1 캐시에서도 누락된 후보 미디어를 생성한다. 기존 media.cut_clip과 media.extract_wav16k를 재사용한다.
+- [x] 기존 재생·파형 UI를 활용한다. 보류·제외 사유 저장, 재생·라벨 단축키, 저장 성공 후 다음 후보 이동부터 구현한다. 저장 실패 시 화면과 선택을 유지한다. 낮은 품질 후보는 별도 큐로 보내고 모델 간 불일치는 검수 우선순위에 활용한다.
+- [x] 라벨링 가이드의 기본값 오염 방지 원칙을 UI에 반영한다. `CONF`·`QUALITY`·`AMBIG` 자동 기본값을 검수 완료로 간주하지 않도록 명시적 확인(또는 미선택 초기화)을 두고, 공용 PC 환경에 대비해 세션 시작 시 `annotator_id`를 확인한다. `valence/arousal` 기본값 4는 평정값으로 집계하지 않는다.
+- [x] 검수자가 영상과 원음으로 발화 경계, 화면과 음성의 화자 일치, 대사와 감정을 확인한다. 네 가지 상태, 처리 사유, 검수자 ID, 실제 검수 시간, 최종 대사·감정과 변경 이력을 남긴다. 독립 정답을 작성할 때는 모델 제안을 가린다.
+- [x] 작업 시간 타이머는 탭 비활성·자리 비움 시 합의한 유휴(idle) 컷오프로 일시정지해 측정 왜곡을 막는다.
+- [x] 데이터·상태 계약에 따라 작업 공간과 최종 출력을 분리하고, 원자적 커밋과 상태 전이(`superseded`, 확정 후 철회 시 격리)를 구현한다. 기존 확정본은 기존 경로와 형식으로 읽을 수 있게 한다.
 - [ ] 완료 기준 · 파일럿에서 재생, 경계 수정, 네 검수 상태의 저장·재조회·철회, 이력 연결, 기본값 확인, 재실행 보호를 확인한다. 수동 기준선보다 시간이 많이 드는 작업을 찾아 후속 실험 여부를 결정한다.
 
 ## 3단계 · 로컬 감정 모델 연결
@@ -144,7 +142,9 @@ uv run python -m tools.run_batch --video-workers 1
 
 ## 파일럿 후 수정 사항
 
-- [ ] **영상 내 클립 후보 선정 기준** · 길이순 상위 3개가 발화 경계, 단일 화자, 음성 명료도 측면에서 적절한지 확인한다. 경계 수정률이나 제외 사유에서 문제가 보이면 길이 외 품질 기준과 3초 미만·12초 초과 발화 처리 기준을 보완하고 같은 영상으로 다시 비교한다.
+- 파일럿 관찰 · `mKwJDo0YTkM`의 105.30–113.96초 후보(8.66초)는 16 kHz WAV의 첫 7초가 1초 창 RMS 기준 약 −69~−64 dBFS이고 마지막 1.66초는 약 −29 dBFS였다. 전사 구간 전체 길이가 긴 후보를 우선하면 앞쪽 정적까지 유리하게 집계된다. 같은 원본에서 VAD가 검출한 발화 비율과 앞뒤 여백을 반영한 순위로 비교한다.
+
+- [ ] **영상 내 클립 후보 선정 기준** · 같은 영상으로 배치를 재실행해 새 후보의 앞뒤 여백, 단일 화자, 대사 완결성을 확인하고 이전 길이순 후보와 비교한다.
 
 ## 보류한 실험
 
@@ -152,6 +152,15 @@ uv run python -m tools.run_batch --video-workers 1
 - [ ] 경계 재조정 비중이 크면 원본 타임라인에서 검수한 뒤 채택 시 추출하는 방식을 기존 방식과 비교한다. 짧은 발화 자동 병합은 별도로 검증한다.
 - [ ] PySceneDetect는 장면 전환 경고로 시험하고 경계 품질과 채택률을 확인한다. AutoClip은 저장소·라이선스·입출력 확인 후 구조를 참고한다. ETRI KMSAV는 다화자 사례 검토에 활용하고 발화자 판별은 별도로 검증한다.
 - [ ] 사람 확정 라벨이 300–500개 쌓이고 표본 구성이 충분하면 단순 결합과 LightGBM 또는 작은 MLP를 비교한다. 학습·임계값 조정·최종 평가는 서로 분리한다.
+
+### 2단계 보완 — 선택 구간 자동 정지
+
+- [x] 선택 구간이 있으면 재생 버튼·영상 클릭·Space로 재생할 때 끝점에서 멈춘다. 다시 재생하면 구간 시작으로 돌아가고, 중간에 일시정지하면 그 위치에서 이어 듣는다.
+- [x] 수정한 경계로 반복 재생하고, ‘원본 이어듣기’로 경계 바깥 대사를 확인할 수 있다.
+- 변경 파일 — `static/app.js`, `static/index.html`, `static/review.mjs`, `test_review_ui.mjs` (emolabel-youtube 기준).
+- [x] Ubuntu에서 실제 후보를 재생해 선택 구간 끝에서 자동 정지하는 것을 확인했다 (사용자 청취).
+- 일부 후보는 대사 도중에 시작하거나 끝날 수 있다. 현재는 검수자가 필요한 구간을 조정하고, 경계 수정에 시간이 반복해서 들면 자동 보정을 다시 검토한다.
+- 검증 — Windows에서 Node UI 7개와 Python 기본 회귀 검사 7개 통과. Ubuntu에서 반복을 켠 원본 이어듣기가 영상 끝까지 재생된 뒤 정지하는지는 별도 확인 대기.
 
 ## 구현 후 검증과 기록
 
@@ -163,38 +172,37 @@ uv run python -m tools.run_batch --video-workers 1
 
 최신 항목을 맨 위에 기록한다. 최근 5건만 유지하고 이전 기록은 `docs/HANDOFF_LOG.md`로 이동한다.
 
-### 2026-11-21 (KST) · Codex · 업로드 전 계획 확인
+### 2026-11-21 (KST) · Codex · 원본 이어듣기 종료 수정
 
-- 단계·상태 — Ubuntu 사용자 출력으로 세 영상 배치 완료와 캐시 재사용 확인. 후보 미디어 추출·청취, 수동 시간, worker 비교는 대기.
-- 변경 — feat/phase-1, PLAN.md의 현황·실행 결과·다음 구현 항목을 갱신했다. 미커밋.
-- 검증 — 현재 배치 코드와 문서를 대조하고 사용자가 제공한 출력으로 실행 상태를 확인했다. 문서 변경 검증을 수행했다.
-- 다음 작업 — Windows 변경분을 검토해 커밋하고, 다음 구현에서 후보 미디어 추출을 연결한다.
+- 단계·상태 — 선택 구간 자동 정지는 Ubuntu 실제 후보에서 사용자 확인 완료. 일부 대사가 잘리는 현상은 후속 검수에서 관찰한다.
+- 변경 — feat/phase-2 미커밋. static/app.js, static/review.mjs, static/index.html, test_review_ui.mjs에 종료 처리 및 회귀 검사를 반영했다.
+- 검증 — Windows에서 Node UI 7개와 Python test_portability 7개 통과. pause → finish에서 원본 재생은 반복 0회, 선택 구간 반복은 1회 확인. WSL 접근 제한(E_ACCESSDENIED)으로 Ubuntu 실영상 미확인.
+- 다음 작업 — 3단계에서 Ubuntu의 로컬 감정 모델과 실행 환경을 확인한다.
 
+### 2026-11-21 (KST) · Antigravity · 선택 구간 자동 정지 코드 리뷰 및 보완
 
-### 2026-11-21 (KST) · Codex · 리뷰 수정
+- 단계·상태 — 2단계 보완(선택 구간 자동 정지) 코드 리뷰 및 엣지 케이스 수정 완료 (Ubuntu 실청취 대기)
+- 변경 — `feat/phase-2`, `static/review.mjs`·`static/app.js`·`test_review_ui.mjs`·`tools/run_batch.py` 수정(미커밋): `<video>` 서브프레임 양자화 오차(±20ms 허용)로 인한 시작점 반복 탐색·끝점 재재생 멈춤 방지(`boundaryEpsilon`), `pause`/`finish` 시 `playingOriginal` 자동 초기화, `playRegionBtn` 비활성·`state.ws` 가드, `no_candidates` 캐시 재사용에도 `selection_version` 일치 검사 추가, JS 회귀 테스트 1건 추가. 이전 인계 1건을 `docs/HANDOFF_LOG.md`로 이동.
+- 검증 — Windows 호스트에서 `node --test emolabel-youtube/test_review_ui.mjs` 6개 통과(64ms), `app.js` ESM 구문 정상, Python 비-HTTP 단위 테스트 55개 통과(1.365s), 수정 파일 모두 LF 확인. `test_review_api.py`(5개, FastAPI `TestClient`)는 Windows 샌드박스 제약, WSL2 Ubuntu 실청취는 환경 미접근으로 미실행 (WSL2 재현: `cd emolabel-youtube && uv run python -m unittest discover -v && node --test test_review_ui.mjs && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000`).
+- 다음 작업 — Ubuntu 복사본을 갱신해 전체 테스트(Python 60개·JS 6개) 실행 후 실제 파일럿 후보의 끝말 정지·원본 이어듣기·검수 작업 시간을 확인하고 `feat/phase-2` 커밋(`.claude/`, `gan-harness/` 제외)
 
-- 단계·상태 — Phase 1 리뷰 지적 3건 수정. WSL2 실측 대기.
-- 변경 — `feat/phase-1` 미커밋. ASR 구간 보존, 체크포인트 읽기 오류 구분, 추론 장치·정밀도 캐시 키 반영.
-- 검증 — Windows에서 `python -B -m unittest discover` 30개 통과. 실제 음성 추론은 WSL2 파일럿에서 검증한다.
-- 다음 작업 — 위 Phase 1 실행 절차로 파일럿 후보의 경계와 대사를 청취 확인한다.
+### 2026-11-21 (KST) · Codex · 선택 구간 자동 정지
 
-### 2026-11-21 (KST) · Antigravity · Phase 1 코드 리뷰 및 보완
+- 단계·상태 — 선택 구간 정지·재재생 및 원본 이어듣기 구현. 실제 청취 대기.
+- 변경 — `feat/phase-2` 미커밋. 검수 화면 재생 제어, 버튼 및 회귀 테스트 추가.
+- 검증 — Windows에서 `node --test test_review_ui.mjs` 5개, `python -B -m unittest -v test_portability` 7개 통과. Chrome 합성 음원 테스트는 응답 대기로 중단. WSL 접근 오류(E_ACCESSDENIED)로 Ubuntu 미실행.
+- 다음 작업 — Ubuntu 복사본을 갱신한 뒤 `emolabel-youtube/`에서 `uv run python -m unittest -v test_portability` 및 `node --test test_review_ui.mjs` 실행. 기존 후보를 열어 끝점 정지와 원본 이어듣기를 청취한다.
 
-- 단계·상태 — 1단계 코드 리뷰 완료 및 HIGH/MEDIUM 5건 수정 완료 (실측 항목 대기)
-- 변경 — `feat/phase-1`, `emolabel-youtube/app/youtube.py`·`tools/run_batch.py`·`test_batch.py`·`test_batch_youtube.py` 수정(미커밋): 로컬 캐시 우선 조회(오프라인/재실행 시 불필요한 YouTube probe 제거), `yt-dlp` 비정상 메타데이터 방어, 손상된 workspace JSON 자동 복구, `process_video` 단계별 헬퍼 분리 및 `*.part*` 정리, `--urls` `#` 주석 무시, 회귀 테스트 4건 추가
-- 검증 — Windows 호스트에서 `python -B -m unittest discover -s emolabel-youtube -v` 26개 전체 통과(0.370s), 수정 파일 모두 LF 확인. WSL2 Ubuntu 환경 미접근으로 실제 다운로드·VAD·ASR은 미실행 (WSL2 재현: `cd emolabel-youtube && uv run python -m unittest -v test_portability && uv run python -m unittest discover -v && uv run python -m tools.run_batch --video-workers 1`)
-- 다음 작업 — WSL2 Ubuntu에서 `pilot_v1` 수동 기준선 측정 및 배치 첫 실행·재실행(`--video-workers` 1 vs 2) 검증 후 `feat/phase-1` 커밋(`gan-harness/` 제외 주의)
+### 2026-11-21 (KST) · Codex · Phase 2 최종 리뷰 수정
 
-### 2026-11-21 (KST) · Codex · Phase 1 구현
+- 단계·상태 — 완료 캐시의 원본 메타데이터 복구 및 SQLite 잠금 오류 분류를 수정했다.
+- 변경 — `feat/phase-2` 미커밋. 배치, 수동·배치 검수 오류 처리, 회귀 테스트를 갱신했다.
+- 검증 — Windows에서 Python 58개 및 JavaScript 4개 통과. 메타데이터 누락·손상 후 재실행과 채택, 잠금·읽기 전용·I/O 오류 응답을 확인했다.
+- 다음 작업 — Ubuntu에서 배치를 재실행해 파일럿 영상의 경계·대사와 검수 시간을 확인한다.
 
-- 단계·상태 — 사용자 합의로 0단계 체크 완료. 1단계 코드를 구현했고 실측 항목은 열어 두었다.
-- 변경 — `feat/phase-1`, 후보 선정·VAD·수집·배치 CLI와 회귀 테스트, 검토 기록을 추가했다. 미커밋.
-- 검증 — Windows Python 3.14에서 `python -B -m unittest discover` 22개 통과, CLI 도움말 확인. WSL2 조회가 E_ACCESSDENIED로 실패해 실제 다운로드·음성 추론·사람 작업 시간은 측정하지 못했다.
-- 다음 작업 — 위 실행 절차로 파일럿의 수동 기준선과 배치 첫 실행·재실행, worker 1·2를 비교한다.
+### 2026-11-21 (KST) · Antigravity · Phase 2 코드 리뷰 및 보완
 
-### 2026-11-21 (KST) · Codex
-
-- 단계·상태 — 0단계 기준 정리 중. 한국어 영상만 사용하고 영상당 길이순 상위 3개를 파일럿 기본값으로 기록했다.
-- 변경 — `main`, `PLAN.md` 미커밋. 후보 선정 재검토 항목과 단계별 Git 커밋·실행 데이터 보호 범위를 정리했다.
-- 검증 — Windows에서 문서와 Git 제외 규칙을 확인했다. 문서 변경으로 Python 테스트는 실행하지 않았다.
-- 다음 작업 — 0단계 합의 후 `pilot_v1`의 한국어 발화 여부를 확인하고 WSL2에서 수동 기준선을 측정한다.
+- 단계·상태 — 2단계 코드 리뷰 완료 및 HIGH 2건·MEDIUM 4건·LOW 1건 수정 완료 (실측 완료 기준 대기)
+- 변경 — `feat/phase-2`, `app/review.py`·`app/review_api.py`·`app/store.py`·`app/main.py`·`tools/run_batch.py`·`static/review.mjs`·`static/app.js` 및 테스트 3건 수정(미커밋): 파형/영상 오류 시 보류·제외 저장 허용 및 타이머 초기화, 체크박스·라디오 포커스 시 단축키 유지(`isShortcutBlocked`), `rejected` 시 경계 이동·불필요한 FFmpeg 추출 차단, `/static/review.mjs` 캐시 무효화, SQLite 락 경합 409 변환·`source.json` 누락 방어·`fps` 전달, `seconds` 누락 방어. 이전 인계 1건을 `docs/HANDOFF_LOG.md`로 이동.
+- 검증 — Windows 호스트에서 Python 비-HTTP 단위 테스트 52개 통과(1.495s), `node --test emolabel-youtube/test_review_ui.mjs` 4개 통과(97ms), 수정 파일 모두 LF 확인. `test_review_api.py`(FastAPI `TestClient`)는 Windows 샌드박스 제약으로 미완료, WSL2 Ubuntu 실측 미실행 (WSL2 재현: `cd emolabel-youtube && uv run python -m unittest discover -v && node --test test_review_ui.mjs && uv run python -m tools.run_batch --video-workers 1`).
+- 다음 작업 — WSL2 Ubuntu에서 전체 테스트(`test_review_api.py` 포함) 통과 확인 후 파일럿 실측(재생·경계 수정·네 상태 저장/철회·기본값 확인·작업 시간)을 마치고 `feat/phase-2` 커밋(`gan-harness/` 제외 주의)

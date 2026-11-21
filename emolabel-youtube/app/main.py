@@ -1,21 +1,25 @@
 """FastAPI app: serves the annotation UI, media (with Range support), and the API."""
 
+import re
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import asr, config, gender, media, qc, schemas, store, youtube
+from .review_api import router as review_router
 
 config.ensure_dirs()
 
 app = FastAPI(title=config.TOOL_NAME, version=config.TOOL_VERSION)
+app.include_router(review_router)
 
 
 @app.middleware("http")
 async def disable_ui_cache(request, call_next):
     """Keep local UI edits visible while the annotation tool is under development."""
     response = await call_next(request)
-    if request.url.path in {"/", "/static/style.css", "/static/app.js"}:
+    if request.url.path in {"/", "/static/style.css", "/static/app.js", "/static/review.mjs"}:
         response.headers["Cache-Control"] = "no-store, max-age=0"
     return response
 
@@ -58,6 +62,8 @@ def load_video(req: schemas.LoadRequest):
 
 @app.get("/api/videos/{video_id}/peaks")
 def get_peaks(video_id: str):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+        raise HTTPException(422, "Invalid video ID")
     try:
         return youtube.get_peaks(video_id)
     except youtube.YouTubeError as e:
@@ -68,6 +74,8 @@ def get_peaks(video_id: str):
 
 @app.post("/api/videos/{video_id}/extract")
 def extract_clip(video_id: str, req: schemas.ExtractRequest):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+        raise HTTPException(400, "Invalid YouTube video ID")
     try:
         meta = youtube.get_meta(video_id)
     except youtube.YouTubeError as e:
@@ -76,15 +84,11 @@ def extract_clip(video_id: str, req: schemas.ExtractRequest):
         raise HTTPException(422, f"end_s {req.end_s:.2f} exceeds video duration {meta['duration_s']:.2f}")
 
     clip_id = store.make_clip_id(video_id, req.start_s, req.end_s)
-    clip_mp4 = store.clip_video_path(clip_id)
-    if clip_mp4.exists() and not req.overwrite:
-        raise HTTPException(409, f"Clip {clip_id} already exists")
-
-    src = youtube.video_path(video_id)
     dur = req.end_s - req.start_s
     try:
-        media.cut_clip(src, clip_mp4, req.start_s, dur)
-        media.extract_wav16k(src, store.clip_wav_path(clip_id), req.start_s, dur)
+        store.extract_draft(clip_id, youtube.video_path(video_id), req.overwrite)
+    except store.StoreError as e:
+        raise HTTPException(e.status_code, str(e))
     except media.MediaError as e:
         raise HTTPException(500, str(e))
     return {
@@ -97,18 +101,19 @@ def extract_clip(video_id: str, req: schemas.ExtractRequest):
 @app.post("/api/clips/{clip_id}/prelabel")
 def prelabel_clip(clip_id: str):
     try:
-        wav = store.clip_wav_path(clip_id)
+        with store.manual_edit(clip_id) as draft:
+            wav = draft / "audio_16k.wav"
+            if not wav.is_file() or not wav.stat().st_size:
+                raise HTTPException(404, f"No extracted audio for clip {clip_id}")
+            prelabels = {
+                "asr": asr.transcribe(wav),
+                "gender": gender.predict(wav),
+                "qc": qc.run(draft / "clip.mp4", wav),
+            }
+            store.write_prelabels(clip_id, prelabels)
+            return prelabels
     except store.StoreError as e:
-        raise HTTPException(400, str(e))
-    if not wav.exists():
-        raise HTTPException(404, f"No extracted audio for clip {clip_id}")
-
-    asr_result = asr.transcribe(wav)
-    gender_result = gender.predict(wav)
-    qc_result = qc.run(store.clip_video_path(clip_id), wav)
-    prelabels = {"asr": asr_result, "gender": gender_result, "qc": qc_result}
-    store.write_prelabels(clip_id, prelabels)
-    return prelabels
+        raise HTTPException(e.status_code, str(e))
 
 
 @app.get("/api/clips/{clip_id}/media")
@@ -125,29 +130,20 @@ def clip_media(clip_id: str):
 @app.post("/api/clips/{clip_id}/annotation")
 def save_annotation(clip_id: str, req: schemas.AnnotationIn):
     try:
-        seg = store.parse_clip_id(clip_id)
-        source_meta = youtube.get_meta(seg["video_id"])
-        clip_probe = media.probe(store.clip_video_path(clip_id))
-        clip_media_info = {
-            "video_codec": clip_probe["video_codec"],
-            "audio_codec": clip_probe["audio_codec"],
-            "width": clip_probe["width"],
-            "height": clip_probe["height"],
-            "fps": clip_probe["fps"],
-        }
-        labels = {
-            "emotion": req.emotion,
-            "valence": req.valence,
-            "arousal": req.arousal,
-            "gender": req.gender,
-            "transcript": req.transcript.strip(),
-            "actor": req.actor.strip(),
-            "notes": req.notes.strip(),
-        }
-        return store.save_annotation(clip_id, labels, req.annotator_id.strip(),
-                                     source_meta, clip_media_info)
-    except (store.StoreError, youtube.YouTubeError) as e:
-        raise HTTPException(400, str(e))
+        with store.manual_edit(clip_id, allow_confirmed=True) as directory:
+            store.require_media(directory)
+            seg = store.parse_clip_id(clip_id)
+            source_meta = youtube.get_meta(seg["video_id"])
+            probe = media.probe(directory / "clip.mp4")
+            clip_media = {key: probe[key] for key in ("video_codec", "audio_codec", "width", "height", "fps")}
+            labels = req.model_dump(exclude={"annotator_id"})
+            for key in ("transcript", "actor", "notes"):
+                labels[key] = labels[key].strip()
+            return store.save_annotation(clip_id, labels, req.annotator_id.strip(), source_meta, clip_media)
+    except store.StoreError as e:
+        raise HTTPException(e.status_code, str(e))
+    except youtube.YouTubeError as e:
+        raise HTTPException(404, str(e))
     except media.MediaError as e:
         raise HTTPException(500, str(e))
 
@@ -162,7 +158,7 @@ def delete_clip(clip_id: str):
     try:
         store.delete_clip(clip_id)
     except store.StoreError as e:
-        raise HTTPException(409 if "annotated" in str(e) else 404, str(e))
+        raise HTTPException(e.status_code, str(e))
 
 
 # Mounted last so explicit routes win. /media serves downloads with Range support.
