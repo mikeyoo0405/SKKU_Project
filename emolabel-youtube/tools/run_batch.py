@@ -1,5 +1,6 @@
 """Prepare playable review candidates. Run with python -m tools.run_batch --help."""
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -27,6 +28,24 @@ def read_json_or_none(path):
         return json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError):
         return None
+
+
+def _archive_selection(folder, state):
+    """Retain the previous candidate list before invalidating a selector cache."""
+    if not state.get("candidates") or state.get("selection_version") == candidates.SELECTION_VERSION:
+        return
+    payload = (folder / "state.json").read_bytes()
+    fingerprint = hashlib.sha256(payload).hexdigest()
+    history = folder / "selection-history"
+    history.mkdir(exist_ok=True)
+    destination = history / f"{fingerprint}.json"
+    if destination.exists():
+        if destination.read_bytes() != payload:
+            raise ValueError("Archived candidate selection fingerprint mismatch")
+        return
+    temporary = history / f"{fingerprint}.tmp"
+    temporary.write_bytes(payload)
+    temporary.replace(destination)
 
 
 def _cleanup_partials(folder):
@@ -160,6 +179,7 @@ def process_video(video_id, folder):
         if _valid_source_meta(read_json_or_none(folder / "source.json"), video_id):
             return _finish_candidate_media(state, folder, source)
 
+    _archive_selection(folder, state)
     if not reuse:
         for name in ("source.json", "source.wav", "asr.json", "vad.json"):
             (folder / name).unlink(missing_ok=True)
@@ -216,9 +236,31 @@ def process_video(video_id, folder):
 
 def main():
     parser = argparse.ArgumentParser(description="Extract review candidates from Korean YouTube videos.")
-    parser.add_argument("--urls", type=Path, help="UTF-8 file with one URL per line (default: pilot_v1)")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--urls", type=Path, help="UTF-8 file with one URL per line (default: pilot_v1)")
+    modes.add_argument("--export-candidates", type=Path, metavar="MANIFEST",
+                       help="Freeze completed workspace candidates for model comparison")
+    modes.add_argument("--candidates", type=Path, metavar="MANIFEST",
+                       help="Run local emotion models on a frozen manifest")
+    parser.add_argument("--edited-transcripts", type=Path, help="Separate corrected-transcript experiment (JSON)")
+    parser.add_argument("--run-tag", default="", help="Experiment name stored with inference results")
     parser.add_argument("--video-workers", type=int, choices=(1, 2), default=1)
     args = parser.parse_args()
+    if (args.edited_transcripts or args.run_tag) and not args.candidates:
+        parser.error("--edited-transcripts and --run-tag require --candidates")
+    workspace = config.DATA_DIR / "workspace"
+    if args.export_candidates or args.candidates:
+        from tools import emotion_batch
+        try:
+            if args.export_candidates:
+                result = emotion_batch.export_manifest(workspace, args.export_candidates)
+            else:
+                result = emotion_batch.run_manifest(workspace, args.candidates, run_tag=args.run_tag,
+                                                    edited_transcripts=args.edited_transcripts)
+        except (ValueError, OSError, sqlite3.Error) as error:
+            parser.exit(1, f"{error}\n")
+        print(json.dumps(result, ensure_ascii=False))
+        return int(bool(result.get("input_errors")))
     urls = (args.urls.read_text(encoding="utf-8-sig").splitlines() if args.urls else
             ["https://youtu.be/" + video_id for video_id in PILOT_IDS])
     videos = {}
@@ -233,7 +275,6 @@ def main():
             print(f"line {index}: {error}", file=sys.stderr)
             failed = True
     config.ensure_dirs()
-    workspace = config.DATA_DIR / "workspace"
     batch_started = perf_counter()
     with ThreadPoolExecutor(args.video_workers) as pool:
         futures = {key: pool.submit(run_video, key, workspace) for key in videos}

@@ -61,16 +61,33 @@ class AnnotationIn(BaseModel):
         return v
 
 
+class ManualCandidateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, allow_inf_nan=False, extra="forbid")
+    video_id: str = Field(pattern=r"^[A-Za-z0-9_-]{11}$")
+    start_s: float = Field(ge=0, strict=True)
+    end_s: float = Field(gt=0, strict=True)
+    source_version: str = Field(min_length=1)
+    annotator_id: str = Field(min_length=1)
+    active_seconds: float = Field(default=0, ge=0, strict=True)
+    blind: bool = Field(default=False, strict=True)
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        if self.end_s <= self.start_s:
+            raise ValueError("끝 시각은 시작 시각보다 커야 합니다.")
+        return self
+
+
 class ReviewDecision(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, allow_inf_nan=False, extra="forbid")
 
     status: Literal["accepted", "accepted_edited", "hold", "rejected"]
     revision: int = Field(ge=0, strict=True)
-    source_version: str | None = None
-    start_s: float = Field(ge=0)
-    end_s: float = Field(gt=0)
+    source_version: str | None = Field(default=None, min_length=1)
+    start_s: float = Field(ge=0, strict=True)
+    end_s: float = Field(gt=0, strict=True)
     annotator_id: str = Field(min_length=1)
-    active_seconds: float = Field(ge=0)
+    active_seconds: float = Field(ge=0, strict=True)
     reason: str = ""
     transcript: str = ""
     emotion: Literal["neutral", "angry", "sad", "happy"] | None = None

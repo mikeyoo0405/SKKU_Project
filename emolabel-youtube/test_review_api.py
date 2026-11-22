@@ -45,6 +45,8 @@ class ReviewApiTests(unittest.TestCase):
     def test_invalid_decisions_are_rejected_before_storage(self):
         for change in ({"confidence": None}, {"verified": False}, {"annotator_id": "  "},
                        {"transcript": " "}, {"end_s": 1}, {"active_seconds": -1},
+                       {"start_s": False}, {"end_s": True}, {"active_seconds": True},
+                       {"source_version": ""},
                        {"emotion": "other"}, {"ambiguous": 2}, {"revision": -1},
                        {"status": "hold", "reason": " "}):
             with self.subTest(change=change):
@@ -86,3 +88,53 @@ class ReviewApiTests(unittest.TestCase):
         withdrawal = self.payload | {"status": "hold", "revision": 1, "reason": "다시 확인"}
         self.assertEqual(self.client.post(self.endpoint, json=withdrawal).status_code, 200)
         self.assertEqual(self.client.get(saved["media_url"]).status_code, 404)
+
+    def test_manual_candidate_source_creation_conflicts_and_playback(self):
+        self.assertEqual(self.client.get("/api/review/candidates/source/bad-id").status_code, 422)
+        self.assertEqual(self.client.get(f"/api/review/candidates/source/{self.video_id}").status_code, 409)
+        config.DOWNLOADS_DIR.mkdir()
+        source = config.DOWNLOADS_DIR / f"{self.video_id}.mp4"
+        source.write_bytes(b"source")
+        (config.DOWNLOADS_DIR / f"{self.video_id}.info.json").write_text(
+            json.dumps({"video_id": self.video_id, "duration_s": 12.0, "fps": 30}), encoding="utf-8"
+        )
+        ctx = self.client.get(f"/api/review/candidates/source/{self.video_id}")
+        self.assertEqual(ctx.status_code, 200)
+        source_version = ctx.json()["source_version"]
+
+        def fake_media(folder, clip, src):
+            directory = folder / "clips" / clip
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "clip.mp4").write_bytes(b"mclip")
+            (directory / "audio_16k.wav").write_bytes(b"maudio")
+            stat = src.stat()
+            (directory / "media.json").write_text(
+                json.dumps({"source_stamp": [stat.st_size, stat.st_mtime_ns], "sizes": [5, 6]}),
+                encoding="utf-8",
+            )
+            return directory
+
+        payload = {"video_id": self.video_id, "start_s": 6, "end_s": 9,
+                   "source_version": source_version, "annotator_id": "pilot",
+                   "active_seconds": 2.0, "blind": False}
+        with patch("app.review.ensure_media", side_effect=fake_media):
+            created = self.client.post("/api/review/candidates", json=payload)
+            self.assertEqual(created.status_code, 200)
+            row = created.json()
+            self.assertEqual(row["origin"], "manual")
+            self.assertEqual(row["status"], "pending")
+            self.assertEqual(self.client.get(row["media_url"]).content, b"mclip")
+            self.assertEqual(self.client.get(row["audio_url"]).content, b"maudio")
+            self.assertEqual(self.client.post("/api/review/candidates", json=payload).status_code, 409)
+            self.assertEqual(
+                self.client.post("/api/review/candidates", json=payload | {"start_s": 9, "end_s": 6}).status_code,
+                422,
+            )
+            fake_asr = {"engine": "faster-whisper", "model": "medium", "language": "ko", "text": "자동 대사", "segments": []}
+            with patch("app.asr.transcribe", return_value=fake_asr):
+                transcribed = self.client.post(f"/api/review/candidates/{row['clip_id']}/transcribe")
+                self.assertEqual(transcribed.status_code, 200)
+                self.assertEqual(transcribed.json()["text"], "자동 대사")
+            with patch("app.asr.transcribe", side_effect=RuntimeError("asr unavailable")):
+                failed = self.client.post(f"/api/review/candidates/{row['clip_id']}/transcribe")
+                self.assertEqual(failed.status_code, 503)

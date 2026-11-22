@@ -112,6 +112,36 @@ class BatchTests(unittest.TestCase):
         self.asr.assert_called_once()
         self.vad.assert_called_once()
 
+    def test_selector_upgrade_archives_old_state_and_preserves_human_output(self):
+        from app import review
+
+        row = self.process()["candidates"][0]
+        review.save_decision(row["clip_id"], dict(
+            revision=0, start_s=row["start_s"], end_s=row["end_s"], status="accepted",
+            reason="", annotator_id="tester", transcript=row["transcript"], emotion="happy",
+            confidence=3, quality="A", ambiguous=0, verified=True, active_seconds=5, blind=False,
+        ))
+        folder = self.workspace / self.video_id
+        output = self.output / row["clip_id"] / "annotation.json"
+        human = output.read_bytes()
+        ledger = (folder / "reviews.json").read_bytes()
+        state_path = folder / "state.json"
+        old = json.loads(state_path.read_text("utf-8"))
+        old["selection_version"] = 2
+        state_path.write_text(json.dumps(old), encoding="utf-8")
+        old_bytes = state_path.read_bytes()
+        refreshed = self.process()
+        archives = list((folder / "selection-history").glob("*.json"))
+        self.assertEqual(len(archives), 1)
+        self.assertEqual(archives[0].read_bytes(), old_bytes)
+        self.assertEqual(refreshed["selection_version"], 3)
+        self.assertEqual(output.read_bytes(), human)
+        self.assertEqual((folder / "reviews.json").read_bytes(), ledger)
+        self.assertTrue(self.process()["cached"])
+        self.assertEqual(len(list((folder / "selection-history").glob("*.json"))), 1)
+        self.asr.assert_called_once()
+        self.vad.assert_called_once()
+
     def test_phase_one_checkpoint_backfills_only_review_media(self):
         first = self.process()
         folder = self.workspace / self.video_id

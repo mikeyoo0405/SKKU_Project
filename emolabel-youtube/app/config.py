@@ -1,5 +1,7 @@
 """Central configuration. Every value can be overridden via environment variable."""
 
+import json
+import math
 import os
 import platform
 import shutil
@@ -86,6 +88,36 @@ DIARIZATION_MODEL = os.environ.get(
 ASR_NO_SPEECH_THRESHOLD = 0.6
 # Below this gender-model confidence the UI preselects "unknown".
 GENDER_CONFIDENCE_THRESHOLD = 0.6
+
+
+def emotion_model(kind: str) -> dict | None:
+    """Read on demand so a bad optional model cannot prevent the review UI starting."""
+    if kind not in ("text", "audio"):
+        raise ValueError("Unknown emotion input kind")
+    raw = os.getenv(f"EMOLABEL_EMOTION_{kind.upper()}", "").strip()
+    if not raw:
+        return None
+    spec = json.loads(raw)
+    required = ("model_id", "version", "quantization", "prompt_version")
+    if not isinstance(spec, dict) or not all(
+        isinstance(spec.get(k), str) and spec[k].strip() for k in required
+    ):
+        raise ValueError("Missing emotion model metadata")
+    if spec.keys() - {*required, "command", "seed", "timeout_s", "temperature"}:
+        raise ValueError("Unknown emotion model setting")
+    command = spec.get("command")
+    if not isinstance(command, list) or not command or not all(
+        isinstance(arg, str) and arg and "\x00" not in arg for arg in command
+    ):
+        raise ValueError("Expected emotion model command as an argument list")
+    timeout = spec.get("timeout_s", 60)
+    seed = spec.get("seed", 0)
+    temperature = spec.get("temperature", 0)
+    if type(timeout) not in (float, int) or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("Invalid emotion model timeout")
+    if type(seed) is not int or type(temperature) not in (float, int) or temperature != 0:
+        raise ValueError("Invalid emotion model decoding settings")
+    return {**spec, "seed": seed, "temperature": 0, "timeout_s": timeout}
 
 
 def ensure_dirs() -> None:

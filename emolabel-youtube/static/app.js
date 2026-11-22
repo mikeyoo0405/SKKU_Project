@@ -1,6 +1,11 @@
 import WaveSurfer from '/static/vendor/wavesurfer.esm.js';
 import RegionsPlugin from '/static/vendor/regions.esm.js';
-import { ActiveClock, bindPlaybackEvents, enforceSelection, isShortcutBlocked, playSelection, queueRows, reviewFields } from './review.mjs?v=playback2';
+import {
+  ActiveClock, bindPlaybackEvents, canStartAddition, canTranscribeCandidate,
+  canUseEmotionShortcut, candidateLabel, enforceSelection, isShortcutBlocked,
+  normalizeBoundsMs, playSelection, queueRows, queueSummaryText,
+  renderSuggestions, restoreReviewFields, suggestionView,
+} from './review.mjs?v=manual-add3';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -16,9 +21,13 @@ const el = {
   setStartBtn: $('#set-start-btn'), setEndBtn: $('#set-end-btn'),
   extractBtn: $('#extract-btn'), extractStatus: $('#extract-status'),
   labelPanel: $('#label-panel'), clipIdLabel: $('#clip-id-label'), qcLine: $('#qc-line'),
-  transcript: $('#transcript'), asrInfo: $('#asr-info'),
+  transcript: $('#transcript'), asrInfo: $('#asr-info'), transcribeBtn: $('#transcribe-btn'),
   genderRadios: $('#gender-radios'), genderInfo: $('#gender-info'),
   emotionRadios: $('#emotion-radios'),
+  modelSuggestions: $('#model-suggestions'),
+  manualAddBtn: $('#manual-add-btn'), manualCreateBtn: $('#manual-create-btn'),
+  manualCancelBtn: $('#manual-cancel-btn'), manualControls: $('#manual-add-controls'),
+  manualStatus: $('#manual-add-status'),
   actor: $('#actor'), notes: $('#notes'), annotatorId: $('#annotator-id'),
   saveBtn: $('#save-btn'), discardBtn: $('#discard-btn'), saveStatus: $('#save-status'),
   clipList: $('#clip-list'),
@@ -42,6 +51,7 @@ const state = {
   genderLabel: {},
   video: null,        // metadata from POST /api/videos
   ws: null,           // wavesurfer instance
+  wsReady: false,     // wavesurfer ready event received
   regions: null,      // regions plugin
   region: null,       // the single active region
   loop: false,
@@ -50,6 +60,7 @@ const state = {
   pendingOverwrite: false,
   busy: false,
   annotator: '', queue: false, rows: [], row: null, clock: null,
+  addition: null, drafts: new Map(),
 };
 
 /* ---------- helpers ---------- */
@@ -107,7 +118,7 @@ function setRadio(name, value) {
 
 async function loadVideo() {
   const url = el.urlInput.value.trim();
-  if (!url || state.busy || !state.annotator || el.blind.checked) return;
+  if (!url || state.busy || state.addition || !state.annotator || el.blind.checked) return;
   setBusy(true);
   setStatus(el.status, '영상을 불러오는 중…', 'busy');
   try {
@@ -133,8 +144,9 @@ async function loadVideo() {
   }
 }
 
-function buildWaveform(peaksData) {
+function buildWaveform(peaksData, onReady) {
   if (state.ws) { state.ws.destroy(); state.ws = null; }
+  state.wsReady = false;
   state.region = null;
   updateRegionReadout();
 
@@ -169,6 +181,12 @@ function buildWaveform(peaksData) {
 
   state.ws = ws;
   state.regions = regions;
+  ws.once('ready', () => {
+    if (state.ws !== ws) return;
+    state.wsReady = true;
+    if (onReady) onReady(ws);
+    updateSaveEnabled();
+  });
   return ws;
 }
 
@@ -225,7 +243,7 @@ function nudge(spec) {
 
 async function extractClip() {
   const r = state.region;
-  if (!r || state.busy || state.queue || !state.annotator) return;
+  if (!r || state.busy || state.queue || state.addition || !state.annotator) return;
   setBusy(true);
   el.extractBtn.disabled = true;
   setStatus(el.extractStatus, '구간을 추출하는 중…', 'busy');
@@ -351,14 +369,20 @@ function resetLabelPanel() {
 }
 
 function updateSaveEnabled() {
+  renderSuggestions(el.modelSuggestions,
+    suggestionView(state.addition ? null : state.row, el.blind.checked, state.region, el.transcript.value));
+  el.manualAddBtn.disabled = !canStartAddition(state);
+  el.manualCreateBtn.disabled = state.busy || !state.addition || !state.region;
+  el.transcribeBtn.classList.toggle('hidden', !state.queue || el.blind.checked);
+  el.transcribeBtn.disabled = !canTranscribeCandidate(state, el.blind.checked);
   const status = state.queue ? el.decision.value : 'accepted';
   const accepts = status === 'accepted' || status === 'accepted_edited';
   const hasRatings = el.confidence.value && el.quality.value && el.ambiguous.value;
   const ready = state.annotator && state.clipId && !state.busy && status &&
-    (!state.queue || ((!accepts || state.region) && state.row?.status !== 'superseded')) &&
+    (!state.queue || (state.clock && (!accepts || state.region) && state.row?.status !== 'superseded')) &&
     (status === 'accepted' || el.reason.value.trim()) &&
     (!accepts || (hasRatings && el.verified.checked && getRadio('emotion') && el.transcript.value.trim()));
-  el.saveBtn.disabled = !ready;
+  el.saveBtn.disabled = Boolean(state.addition) || !ready;
 }
 
 async function saveAnnotation() {
@@ -447,10 +471,10 @@ async function refreshClipList() {
 function setBusy(busy) {
   state.busy = busy;
   el.workspace.inert = busy;
-  el.sessionBtn.disabled = busy;
-  el.queueBtn.disabled = busy || !state.annotator;
-  el.loadBtn.disabled = busy || !state.annotator || el.blind.checked;
-  el.filter.disabled = busy;
+  el.sessionBtn.disabled = busy || Boolean(state.addition);
+  el.queueBtn.disabled = busy || Boolean(state.addition) || !state.annotator;
+  el.loadBtn.disabled = busy || Boolean(state.addition) || !state.annotator || el.blind.checked;
+  el.filter.disabled = busy || Boolean(state.addition);
   el.extractBtn.disabled = busy || !state.region;
   updateClock();
   updateSaveEnabled();
@@ -468,6 +492,7 @@ function clearMedia() {
   el.video.pause();
   state.ws?.destroy();
   state.ws = null;
+  state.wsReady = false;
   state.region = null;
   state.regions = null;
   state.video = null;
@@ -498,10 +523,11 @@ function setQueueMode(enabled) {
 }
 
 function toggleSession() {
-  if (state.busy) return;
+  if (state.busy || state.addition) return;
   if (state.annotator) {
     setQueueMode(false);
     state.rows = [];
+    state.drafts.clear();
     state.annotator = '';
     el.annotatorId.value = '';
     el.blind.checked = false;
@@ -525,14 +551,13 @@ function toggleSession() {
 function renderQueue() {
   const rows = queueRows(state.rows, el.filter.value, el.blind.checked);
   el.clipList.replaceChildren();
-  const counts = ['pending', 'quality', 'history'].map(filter => queueRows(state.rows, filter, el.blind.checked).length);
-  $('#queue-count').textContent = `일반 ${counts[0]} · 품질 확인 ${counts[1]} · 처리 이력 ${counts[2]}`;
+  $('#queue-count').textContent = queueSummaryText(state.rows, el.blind.checked);
   for (const row of rows) {
     const li = document.createElement('li');
     const button = document.createElement('button');
     button.type = 'button';
     button.setAttribute('aria-current', String(state.row?.clip_id === row.clip_id));
-    button.textContent = `${row.video_id} · ${fmt(row.start_s)}–${fmt(row.end_s)}초 · ${decisionNames[row.status]}`;
+    button.textContent = candidateLabel(row, decisionNames, fmt);
     button.addEventListener('click', () => selectCandidate(row));
     li.append(button);
     el.clipList.append(li);
@@ -585,7 +610,10 @@ async function openCandidate(row) {
   el.cutVideo.src = row.media_url;
   el.cutAudio.src = row.audio_url;
   openLabelPanel(row.clip_id);
-  const fields = reviewFields(row, el.blind.checked);
+  const draft = state.drafts.get(row.clip_id);
+  const restored = restoreReviewFields(row, el.blind.checked, draft);
+  if (draft && !restored.restored) state.drafts.delete(row.clip_id);
+  const fields = restored.fields;
   el.transcript.value = fields.transcript;
   el.transcript.placeholder = el.blind.checked ? '직접 들은 대사를 입력하세요' : '들리는 대로 확인하고 수정하세요';
   for (const name of ['actor', 'notes', 'reason', 'confidence', 'quality', 'ambiguous']) {
@@ -593,6 +621,14 @@ async function openCandidate(row) {
   }
   setRadio('emotion', fields.emotion);
   setRadio('gender', fields.gender);
+  if (restored.restored) {
+    el.verified.checked = fields.verified;
+    el.decision.value = fields.decision;
+  }
+  if (row.origin === 'manual') {
+    el.videoInfo.textContent += ` · 직접 추가 · 구간 선택 ${fmt(row.manual_creation?.active_seconds || 0)}초`;
+    if (row.asr_transcript && !el.blind.checked) el.asrInfo.textContent = '(원본 ASR 초안)';
+  }
   if (!el.blind.checked && row.quality_flags?.length) {
     el.qcLine.textContent = row.quality_flags.join(' · ');
     el.qcLine.classList.remove('hidden');
@@ -600,7 +636,8 @@ async function openCandidate(row) {
   showHistory(row);
   $('#active-seconds').textContent = '0';
   if (!row.source_url) {
-    if (row.status !== 'superseded') state.clock = new ActiveClock();
+    if (restored.restored) state.drafts.delete(row.clip_id);
+    if (row.status !== 'superseded') state.clock = restored.clock || new ActiveClock();
     el.videoInfo.textContent += ' · 원본 변경 또는 누락';
     updateClock();
     updateSaveEnabled();
@@ -610,23 +647,25 @@ async function openCandidate(row) {
   try {
     peaks = await api(`/api/videos/${row.video_id}/peaks`);
   } catch (e) {
-    if (row.status !== 'superseded') state.clock = new ActiveClock();
+    if (restored.restored) state.drafts.delete(row.clip_id);
+    if (row.status !== 'superseded') state.clock = restored.clock || new ActiveClock();
     el.videoInfo.textContent += ' · 파형 불러오기 실패';
     updateClock();
     updateSaveEnabled();
     throw e;
   }
-  const ws = buildWaveform(peaks);
-  ws.once('ready', () => {
-    if (state.ws !== ws) return;
-    setRegionBounds(row.start_s, row.end_s);
-    ws.setTime(row.start_s);
-    if (row.status !== 'superseded') state.clock = new ActiveClock();
+  const ws = buildWaveform(peaks, () => {
+    if (state.addition) return;
+    if (restored.restored) state.drafts.delete(row.clip_id);
+    setRegionBounds(restored.bounds?.start ?? row.start_s, restored.bounds?.end ?? row.end_s);
+    ws.setTime(state.region.start);
+    if (row.status !== 'superseded') state.clock = restored.clock || new ActiveClock();
     updateClock();
   });
   ws.on('error', () => {
     if (state.ws !== ws) return;
-    if (row.status !== 'superseded' && !state.clock) state.clock = new ActiveClock();
+    if (restored.restored) state.drafts.delete(row.clip_id);
+    if (row.status !== 'superseded' && !state.clock) state.clock = restored.clock || new ActiveClock();
     updateClock();
     updateSaveEnabled();
     setStatus(el.status, '원본 영상을 재생할 수 없습니다. 배치 미디어를 확인하세요.', 'error');
@@ -634,7 +673,7 @@ async function openCandidate(row) {
 }
 
 async function selectCandidate(row) {
-  if (state.busy) return;
+  if (state.busy || state.addition) return;
   setBusy(true);
   try {
     await openCandidate(row);
@@ -647,16 +686,17 @@ async function selectCandidate(row) {
 }
 
 async function startQueue() {
-  if (state.busy || !state.annotator) return;
+  if (state.busy || state.addition || !state.annotator) return;
   setBusy(true);
   try {
-    const rows = await api('/api/review/candidates');
+    const rows = await api(`/api/review/candidates?blind=${el.blind.checked}`);
     setQueueMode(true);
     state.rows = rows;
     el.workspace.classList.remove('hidden');
     const available = renderQueue();
     await openCandidate(available[0]);
-    setStatus(el.status, rows.length ? '검수 목록을 불러왔습니다.' : '배치를 실행해 검수 후보를 생성하세요.');
+    setStatus(el.status, rows.length ? '검수 목록을 불러왔습니다.'
+      : '배치를 실행하거나 상단 URL 수동 불러오기로 새 구간을 추가하세요.');
   } catch (e) {
     setStatus(el.status, e.message, 'error');
   } finally {
@@ -668,10 +708,10 @@ async function saveReview() {
   const row = state.row;
   if (!row || !state.clock || state.busy || el.saveBtn.disabled) return;
   setBusy(true);
-  const roundMs = seconds => Math.round(seconds * 1000) / 1000;
+  const bounds = normalizeBoundsMs(state.region?.start ?? row.start_s, state.region?.end ?? row.end_s, row.source_duration_s);
   const body = {
     status: el.decision.value, revision: row.revision, source_version: row.source_version,
-    start_s: roundMs(state.region?.start ?? row.start_s), end_s: roundMs(state.region?.end ?? row.end_s),
+    start_s: bounds.start_s, end_s: bounds.end_s,
     reason: el.reason.value.trim(), annotator_id: state.annotator, active_seconds: state.clock.seconds(),
     transcript: el.transcript.value.trim(), emotion: getRadio('emotion'), gender: getRadio('gender') || 'unknown',
     actor: el.actor.value.trim(), notes: el.notes.value.trim(),
@@ -686,11 +726,12 @@ async function saveReview() {
     return;
   }
   // The POST is committed. Never resubmit a decision if refreshing the list fails.
+  state.drafts.delete(row.clip_id);
   state.clock = null;
   state.row = null;
   resetLabelPanel();
   try {
-    state.rows = await api('/api/review/candidates');
+    state.rows = await api(`/api/review/candidates?blind=${el.blind.checked}`);
     if (el.filter.value === 'history') {
       el.filter.value = state.rows.some(r => r.status === 'pending' && !r.low_quality) ? 'pending' : 'quality';
     }
@@ -700,6 +741,158 @@ async function saveReview() {
     state.rows = [];
     await openCandidate(null);
     setStatus(el.status, `저장 완료. 목록을 다시 불러오세요. ${e.message}`, 'error');
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function transcribeCurrentCandidate() {
+  if (!canTranscribeCandidate(state, el.blind.checked)) return;
+  const clipId = state.row.clip_id;
+  setBusy(true);
+  el.asrInfo.textContent = '음성을 전사하는 중…';
+  setStatus(el.saveStatus, '');
+  try {
+    const res = await api(`/api/review/candidates/${clipId}/transcribe`, { method: 'POST', body: '{}' });
+    if (state.row?.clip_id !== clipId) return;
+    if (res.text) {
+      el.transcript.value = res.text;
+      el.asrInfo.textContent = res.model ? `(${res.model.split('/').pop()} · 초안)` : '(자동 전사 초안)';
+    } else {
+      el.asrInfo.textContent = '(음성이 감지되지 않았습니다 — 들리는 대로 입력하세요)';
+    }
+  } catch (e) {
+    if (state.row?.clip_id === clipId) {
+      el.asrInfo.textContent = '(자동 전사 실패 — 직접 입력하세요)';
+      setStatus(el.saveStatus, e.message, 'error');
+    }
+  } finally {
+    setBusy(false);
+  }
+}
+
+/* ---------- manual candidate addition ---------- */
+
+function currentReviewDraft() {
+  const fields = {};
+  for (const name of ['transcript', 'actor', 'notes', 'reason', 'decision', 'confidence', 'quality', 'ambiguous']) {
+    fields[name] = el[name].value;
+  }
+  fields.emotion = getRadio('emotion');
+  fields.gender = getRadio('gender');
+  fields.verified = el.verified.checked;
+  return {fields, bounds: state.region ? {start: state.region.start, end: state.region.end} : null,
+    clock: state.clock, revision: state.row?.revision, source_version: state.row?.source_version};
+}
+
+function clearSelection() {
+  for (const region of state.regions?.getRegions() || []) region.remove();
+  state.region = null;
+  updateRegionReadout();
+}
+
+async function beginAddition() {
+  if (!canStartAddition(state)) return;
+  if (!state.queue && state.clipId) {
+    setStatus(el.status, '현재 추출 구간을 저장하거나 폐기한 뒤 새 구간을 추가하세요.');
+    return;
+  }
+  setBusy(true);
+  try {
+    const context = await api(`/api/review/candidates/source/${state.video.video_id}`);
+    if (state.queue && context.source_version !== state.row?.source_version) {
+      throw new Error('원본이 변경됐습니다. 검수 목록을 다시 불러오세요.');
+    }
+    const previous = currentReviewDraft();
+    state.clock?.pause();
+    state.ws.pause();
+    for (const player of [el.video, el.cutVideo, el.cutAudio]) player.pause();
+    state.playingOriginal = false;
+    state.addition = {context, previous, previewHidden: el.preview.classList.contains('hidden'),
+      extractHidden: $('#extract-row').classList.contains('hidden')};
+    state.clock = new ActiveClock();
+    clearSelection();
+    el.labelPanel.hidden = true;
+    el.preview.classList.add('hidden');
+    el.clipList.inert = true;
+    $('#extract-row').classList.add('hidden');
+    el.manualControls.hidden = false;
+    const rangeHint = state.config ? ` (${state.config.min_clip_s}–${state.config.max_clip_s}초)` : '';
+    setStatus(el.manualStatus, `파형을 드래그하거나 시작/끝 버튼으로 새 구간을 선택하세요${rangeHint}.`);
+  } catch (e) {
+    setStatus(el.status, e.message, 'error');
+  } finally {
+    setBusy(false);
+  }
+}
+
+function leaveAddition(restore) {
+  const addition = state.addition;
+  if (!addition) return;
+  state.clock?.pause();
+  state.ws?.pause();
+  state.playingOriginal = false;
+  state.addition = null;
+  state.clock = addition.previous.clock;
+  el.labelPanel.hidden = false;
+  el.manualControls.hidden = true;
+  setStatus(el.manualStatus, '');
+  el.preview.classList.toggle('hidden', addition.previewHidden);
+  $('#extract-row').classList.toggle('hidden', addition.extractHidden);
+  el.clipList.inert = false;
+  if (restore) {
+    clearSelection();
+    const bounds = addition.previous.bounds;
+    if (bounds) {
+      setRegionBounds(bounds.start, bounds.end);
+      state.ws?.setTime(bounds.start);
+    }
+  }
+}
+
+function cancelAddition() {
+  if (state.busy || !state.addition) return;
+  leaveAddition(true);
+  setBusy(false);
+  setStatus(el.status, '새 구간 추가를 취소했습니다. 이전 검수를 이어가세요.');
+}
+
+async function submitAddition() {
+  if (state.busy || !state.addition || !state.region) return;
+  const addition = state.addition;
+  setBusy(true);
+  const bounds = normalizeBoundsMs(state.region.start, state.region.end, addition.context.source_duration_s);
+  const body = {video_id: addition.context.video_id, source_version: addition.context.source_version,
+    start_s: bounds.start_s, end_s: bounds.end_s,
+    annotator_id: state.annotator, active_seconds: state.clock.seconds(), blind: el.blind.checked};
+  let added;
+  try {
+    added = await api('/api/review/candidates', {method: 'POST', body: JSON.stringify(body)});
+  } catch (e) {
+    setStatus(el.manualStatus, e.message, 'error');
+    setBusy(false);
+    return; // Keep the new selection and the original review intact for retry/cancel.
+  }
+  const hadPrevious = Boolean(state.row);
+  if (hadPrevious) state.drafts.set(state.row.clip_id, addition.previous);
+  // Creation is committed. A refresh failure must never resubmit it.
+  leaveAddition(false);
+  let rows;
+  try {
+    rows = await api(`/api/review/candidates?blind=${el.blind.checked}`);
+  } catch {
+    rows = [...state.rows.filter(row => row.clip_id !== added.clip_id), added];
+  }
+  try {
+    setQueueMode(true);
+    state.rows = rows;
+    el.filter.value = 'pending';
+    await openCandidate(rows.find(row => row.clip_id === added.clip_id) || added);
+    setStatus(el.status, hadPrevious
+      ? '직접 추가한 구간을 검수하세요. 이전 후보의 작성 내용도 보관했습니다.'
+      : '직접 추가한 구간을 검수하세요.', 'ok');
+  } catch (e) {
+    setStatus(el.status, `후보 추가 완료. 목록을 다시 열어주세요. ${e.message}`, 'error');
   } finally {
     setBusy(false);
   }
@@ -719,6 +912,10 @@ async function init() {
     if (event.key === 'Enter') toggleSession();
   });
   el.queueBtn.addEventListener('click', startQueue);
+  el.transcribeBtn.addEventListener('click', transcribeCurrentCandidate);
+  el.manualAddBtn.addEventListener('click', beginAddition);
+  el.manualCancelBtn.addEventListener('click', cancelAddition);
+  el.manualCreateBtn.addEventListener('click', submitAddition);
   el.filter.addEventListener('change', () => selectCandidate(renderQueue()[0]));
   for (const eventName of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'input']) {
     document.addEventListener(eventName, () => state.clock?.activity(), { passive: true });
@@ -772,7 +969,7 @@ async function init() {
     else if (e.key === 'l' || e.key === 'L') { el.loopToggle.checked = !el.loopToggle.checked; state.loop = el.loopToggle.checked; }
     else if (e.key === '[') el.setStartBtn.click();
     else if (e.key === ']') el.setEndBtn.click();
-    else if (state.clipId && state.row?.status !== 'superseded' && /^[1-4]$/.test(e.key)) {
+    else if (canUseEmotionShortcut(state) && /^[1-4]$/.test(e.key)) {
       setRadio('emotion', state.config.emotions[Number(e.key) - 1].value);
       updateSaveEnabled();
     }
