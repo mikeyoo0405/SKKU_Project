@@ -1,4 +1,5 @@
 """HTTP interface for batch candidate playback and human decisions."""
+import json
 import sqlite3
 from contextlib import contextmanager
 from typing import Literal
@@ -23,7 +24,12 @@ def _http_errors():
         raise HTTPException(409, "배치 또는 다른 검수가 진행 중입니다. 잠시 후 다시 시도하세요.") from exc
     except review.NotFound as exc:
         raise HTTPException(404, str(exc)) from exc
-    except (store.StoreError, ValueError) as exc:
+    except store.StoreError as exc:
+        code = exc.status_code if exc.status_code in {404, 409} else 422
+        raise HTTPException(code, str(exc)) from exc
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise
+    except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except media.MediaError as exc:
         raise HTTPException(500, str(exc)) from exc
@@ -42,15 +48,39 @@ def _with_urls(row):
 
 
 @router.get("")
-def candidates():
+def candidates(blind: bool = False):
     with _http_errors():
-        return [_with_urls(row) for row in review.list_candidates()]
+        return [_with_urls(row) for row in review.list_candidates(blind=blind)]
+
+
+@router.post("/{clip_id}/transcribe")
+def transcribe(clip_id: str):
+    with _http_errors():
+        wav = review.candidate_audio_path(clip_id)
+    try:
+        return review.run_candidate_asr(wav, clip_id)
+    except (ImportError, RuntimeError, OSError, ValueError) as exc:
+        raise HTTPException(503, "자동 전사 모델을 실행할 수 없습니다. 대사를 직접 입력하세요.") from exc
 
 
 @router.post("/{clip_id}")
 def decide(clip_id: str, decision: schemas.ReviewDecision):
     with _http_errors():
-        return _with_urls(review.save_decision(clip_id, decision.model_dump()))
+        row = review.save_decision(clip_id, decision.model_dump())
+        return _with_urls(review.blind_candidate(row) if decision.blind else row)
+
+
+@router.post("")
+def add_candidate(request: schemas.ManualCandidateRequest):
+    with _http_errors():
+        row = review.add_manual_candidate(request.video_id, request.model_dump(exclude={"video_id"}))
+        return _with_urls(review.blind_candidate(row) if request.blind else row)
+
+
+@router.get("/source/{video_id}")
+def manual_source(video_id: str):
+    with _http_errors():
+        return review.manual_source_context(video_id)
 
 
 @router.get("/{clip_id}/{kind}")

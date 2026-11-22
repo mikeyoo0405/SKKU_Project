@@ -8,6 +8,15 @@ Codex와 Antigravity가 공유하는 프로젝트 지침입니다. 작업은 저
 - 영상 수집, 후보 선정, 검수, 저장은 공통 흐름을 사용합니다. 모델은 감정을 사전 제안하며, 최종 라벨과 채택 여부는 사람이 확정합니다.
 - 첫 파일럿은 WSL2 Ubuntu, Python 3.12, FFmpeg, CPU 기준입니다. 설치와 실행은 [EmoLabel README](emolabel-youtube/README.md)를 따릅니다.
 
+## 문서 역할과 읽기 순서
+
+각 사실은 하나의 정본 문서에만 기록합니다. 아래 문서는 맥락 참고 자료이며, 실행 명령이나 상태 주장은 항상 현재 코드·테스트·Git으로 확인한 뒤 적용합니다.
+
+1. **Constitution (규칙)** — [AGENTS.md](AGENTS.md): 협업·편집·검증·비밀 보호 지침
+2. **Map (구조·런북)** — [README.md](README.md) (모듈 점프 테이블), [emolabel-youtube/README.md](emolabel-youtube/README.md) (설치·실행 안내)
+3. **Status (현황)** — [PLAN.md](PLAN.md): 현재 단계, 합의 기준, 열린 체크리스트, 기각·보류 목록(Delete-Zone), 최신 인계 5건
+4. **History (이력)** — [docs/HANDOFF_LOG.md](docs/HANDOFF_LOG.md) (이전 인계), [docs/PILOT_LOG.md](docs/PILOT_LOG.md) (1–3차 파일럿·R0–R3 상세 근거)
+
 ## 시작과 계획
 
 1. 세션을 시작하거나 다른 도구의 작업을 이어받을 때 `AGENTS.md`와 `PLAN.md`를 읽습니다. 현재 단계, 열린 체크리스트, 최근 인계 기록을 확인합니다.
