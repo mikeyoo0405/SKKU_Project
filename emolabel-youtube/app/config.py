@@ -120,6 +120,30 @@ def emotion_model(kind: str) -> dict | None:
     return {**spec, "seed": seed, "temperature": 0, "timeout_s": timeout}
 
 
+def scene_mode() -> str:
+    """Read optional scene-cut warning mode on demand (off or warn)."""
+    raw = os.getenv("EMOLABEL_SCENE_MODE", "off").strip().lower()
+    if raw not in {"off", "warn"}:
+        raise ValueError("EMOLABEL_SCENE_MODE must be off or warn")
+    return raw
+
+
+def scene_adaptive_threshold() -> float:
+    raw = os.getenv("EMOLABEL_SCENE_ADAPTIVE_THRESHOLD", "3.0").strip()
+    value = float(raw)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("EMOLABEL_SCENE_ADAPTIVE_THRESHOLD must be a positive number")
+    return value
+
+
+def scene_min_scene_len() -> int:
+    raw = os.getenv("EMOLABEL_SCENE_MIN_LEN", "15").strip()
+    value = int(raw)
+    if value < 1:
+        raise ValueError("EMOLABEL_SCENE_MIN_LEN must be at least 1")
+    return value
+
+
 def ensure_dirs() -> None:
     DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

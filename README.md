@@ -11,10 +11,10 @@
 | 역할 | 정본 문서 | 담당 내용 |
 | --- | --- | --- |
 | **Constitution (규칙)** | [AGENTS.md](AGENTS.md) | Codex·Antigravity 협업 규칙, 편집(UTF-8/LF)·검증·인계·비밀 보호 원칙 |
-| **Map (지도·런북)** | [README.md](README.md) (본 문서), [emolabel-youtube/README.md](emolabel-youtube/README.md) | 저장소 구조·모듈 소유 파일·점프 테이블, Ubuntu/Mac 설치·배치·평가 실행 안내 |
-| **Status (현황)** | [PLAN.md](PLAN.md) | 현재 단계, 합의 임계값, 데이터·상태 계약, 열린 체크리스트, 기각·보류 목록(Delete-Zone), 최신 인계 5건 |
+| **Map (지도·런북)** | [README.md](README.md) (본 문서), [emolabel-youtube/README.md](emolabel-youtube/README.md), [docs/WORKFLOW_GUIDE.md](docs/WORKFLOW_GUIDE.md) | 저장소 구조·모듈 점프 테이블, Ubuntu/Mac 상세 설치·배치·평가 런북, 팀원용 빠른 시작 가이드 |
+| **Status (현황·계획)** | [PLAN.md](PLAN.md), [docs/TEAM_ADVANTAGES_PLAN.md](docs/TEAM_ADVANTAGES_PLAN.md) | 현재 단계·합의 기준·데이터 계약·열린 체크리스트·기각 목록(Delete-Zone)·최신 인계 5건, 팀원 프로그램 장점 도입 제안안(검토 대기) |
 | **History (이력)** | [docs/HANDOFF_LOG.md](docs/HANDOFF_LOG.md), [docs/PILOT_LOG.md](docs/PILOT_LOG.md) | 과거 세션 인계 이력, 1–3차 파일럿 및 R0–R3 상세 실행·평가 기록 |
-| **Domain Guides** | [ANNOTATION_GUIDE.md](emolabel-youtube/docs/ANNOTATION_GUIDE.md), [DATASET_CARD.md](emolabel-youtube/docs/DATASET_CARD.md), [GPT_ASSISTANCE.md](emolabel-youtube/docs/GPT_ASSISTANCE.md) | 감정 라벨링 기준, 데이터셋 설명, 선택적 GPT 보조 안내 |
+| **Domain Guides** | [ANNOTATION_GUIDE.md](emolabel-youtube/docs/ANNOTATION_GUIDE.md), [DATASET_CARD.md](emolabel-youtube/docs/DATASET_CARD.md), [GPT_ASSISTANCE.md](emolabel-youtube/docs/GPT_ASSISTANCE.md), [LICENSES_AND_RIGHTS.md](docs/LICENSES_AND_RIGHTS.md) | 감정 라벨링 기준, 데이터셋 설명, 선택적 GPT 보조 안내, 오픈소스·모델 라이선스 및 데이터 권한 주의사항 |
 
 ---
 
@@ -27,7 +27,7 @@
 | ASR(Linux faster-whisper / Mac MLX)·VAD·QC·성별 | `app/asr.py`, `app/asr_faster.py`, `app/qc.py`, `app/gender.py` | `test_portability.py`, `test_candidates.py` |
 | 미디어 자르기·16 kHz WAV 추출·후보 미디어 캐시 | `app/media.py`, `app/candidate_media.py` | `test_batch.py`, `test_boundary_reproduction.py` |
 | 후보 선정(선정 v3, 경계 보정·플래그·순위) | `app/candidates.py` | `test_candidates.py`, `test_boundary_reproduction.py` |
-| URL 배치 실행·락·캐시·선정 이력 보존 | `tools/run_batch.py` | `test_batch.py`, `test_emotion_batch.py` |
+| URL 배치 실행·락·캐시·선정 이력·S1 장면 분석·S2 실행 시간 | `tools/run_batch.py`, `app/scene.py`, `app/run_summary.py` | `test_batch.py`, `test_emotion_batch.py`, `test_scene.py`, `test_run_summary.py` |
 | 로컬 감정 모델·오류 진단(R1)·평균 결합·연결 확인 | `app/emotion.py`, `app/emotion_scores.py`, `tools/local_emotion.py`, `tools/scored_emotion.py`, `tools/configure_emotion.py`, `tools/check_emotion_connection.py`, `tools/emotion_batch.py` | `test_emotion.py`, `test_local_emotion.py`, `test_scored_emotion.py`, `test_emotion_batch.py` |
 | 검수 큐·수동 구간 추가·원자적 확정 저장·철회 격리·API | `app/review.py`, `app/review_api.py`, `app/store.py`, `app/schemas.py`, `app/main.py` | `test_review.py`, `test_manual_candidates.py`, `test_review_api.py`, `test_emotion_review.py`, `test_manual.py` |
 | 웹 검수 UI·파형·선택 구간 자동 정지·타이머 | `static/index.html`, `static/app.js`, `static/review.mjs`, `static/style.css` | `test_review_ui.mjs`, `test_boundary_playback.mjs` |

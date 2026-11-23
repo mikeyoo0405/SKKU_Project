@@ -138,3 +138,17 @@ class ReviewApiTests(unittest.TestCase):
             with patch("app.asr.transcribe", side_effect=RuntimeError("asr unavailable")):
                 failed = self.client.post(f"/api/review/candidates/{row['clip_id']}/transcribe")
                 self.assertEqual(failed.status_code, 503)
+
+    def test_workspace_summary_endpoint_and_blind_mode(self):
+        normal = self.client.get("/api/review/summary")
+        self.assertEqual(normal.status_code, 200)
+        body = normal.json()
+        self.assertEqual(body["scope"], "current_review_workspace")
+        self.assertFalse(body["blind"])
+        self.assertEqual(body["review"]["total_candidates"], 0)
+        self.assertIsNone(body["latest_batch_run"])
+
+        blind = self.client.get("/api/review/summary?blind=true")
+        self.assertEqual(blind.status_code, 200)
+        self.assertTrue(blind.json()["blind"])
+        self.assertIsNone(blind.json()["latest_emotion_run"])

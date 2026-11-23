@@ -10,6 +10,13 @@ from fastapi.responses import FileResponse
 from . import candidate_media, config, media, review, schemas, store, youtube
 
 router = APIRouter(prefix="/api/review/candidates")
+summary_router = APIRouter(prefix="/api/review")
+
+
+@summary_router.get("/summary")
+def summary(blind: bool = False):
+    with _http_errors():
+        return review.workspace_summary(blind=blind)
 
 
 @contextmanager

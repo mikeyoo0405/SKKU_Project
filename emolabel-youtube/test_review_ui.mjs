@@ -4,8 +4,9 @@ import {
   ActiveClock, bindPlaybackEvents, canStartAddition, canTranscribeCandidate,
   canUseEmotionShortcut, candidateLabel, enforceSelection, isShortcutBlocked,
   normalizeBoundsMs, playSelection, queueRows, queueSummaryText,
-  renderSuggestions, restoreReviewFields, reviewFields, suggestionText,
-  suggestionView,
+  renderSceneWarning, renderSuggestions, renderWorkspaceSummary,
+  restoreReviewFields, reviewFields, sceneWarningView, suggestionText,
+  suggestionView, workspaceSummaryView,
 } from './static/review.mjs';
 import { EventEmitter } from 'node:events';
 
@@ -280,4 +281,126 @@ test('manual addition guards shortcuts, supports url-loaded videos and hides sug
   assert.equal(canTranscribeCandidate({ queue: true, busy: false, addition: {}, row: manualRow }, false), false);
   assert.equal(canTranscribeCandidate({ queue: true, busy: false, addition: null, row: { ...row, status: 'superseded' } }, false), false);
   assert.equal(canTranscribeCandidate({ queue: false, busy: false, addition: null, row: null }, false), false);
+});
+
+test('S1 scene warning distinguishes all states, live-recalculates bounds, and wires cut seek buttons', () => {
+  assert.equal(sceneWarningView({ status: 'not_analyzed', reason: 'scene_mode_off' }, { start: 1, end: 4 }), null);
+  assert.match(sceneWarningView({ status: 'not_analyzed', reason: 'not_run' }, { start: 1, end: 4 }).label, /미실행/);
+  assert.match(sceneWarningView({ status: 'not_analyzed', reason: 'source_changed' }, { start: 1, end: 4 }).label, /재실행/);
+  assert.match(sceneWarningView({ status: 'unavailable', reason: 'dependency_missing' }, { start: 1, end: 4 }).label, /미설치/);
+  assert.match(sceneWarningView({ status: 'failed', reason: 'detection_failed' }, { start: 1, end: 4 }).label, /실패/);
+
+  const warning = { status: 'has_cuts', cuts_s: [2.5], source_cuts_s: [2.5, 6.4] };
+  const inside = sceneWarningView(warning, { start: 1.0, end: 4.0 });
+  assert.equal(inside.tone, 'warn');
+  assert.deepEqual(inside.cuts, [2.5]);
+
+  // Live drag outside cut 2.5 turns into no_cuts immediately.
+  const movedClean = sceneWarningView(warning, { start: 3.0, end: 5.5 });
+  assert.equal(movedClean.tone, 'ok');
+  assert.deepEqual(movedClean.cuts, []);
+
+  // Dragging across cut 6.4 picks up the new cut.
+  const movedOther = sceneWarningView(warning, { start: 5.0, end: 8.0 });
+  assert.equal(movedOther.tone, 'warn');
+  assert.deepEqual(movedOther.cuts, [6.4]);
+
+  // Queue label adds [장면 전환] only when cuts exist.
+  const names = { pending: '미검수' };
+  assert.match(candidateLabel({ video_id: 'abc', start_s: 1, end_s: 4, status: 'pending', scene_warning: warning }, names, s => s.toFixed(2)), /\[장면 전환\]/);
+
+  // DOM renderer uses textContent and binds click seek handler.
+  const sought = [];
+  const doc = {
+    createElement: tag => ({
+      tag, children: [], ownerDocument: doc, listeners: {},
+      append(child) { this.children.push(child); },
+      replaceChildren() { this.children = []; },
+      addEventListener(name, fn) { this.listeners[name] = fn; },
+    }),
+  };
+  const container = doc.createElement('section');
+  renderSceneWarning(container, inside, cut => sought.push(cut));
+  assert.equal(container.hidden, false);
+  assert.equal(container.className, 'scene-warning scene-warn');
+  const cutBtn = container.children[2].children[0];
+  assert.equal(cutBtn.textContent, '컷 2.50초로 이동');
+  cutBtn.listeners.click();
+  assert.deepEqual(sought, [2.5]);
+
+  renderSceneWarning(container, null);
+  assert.equal(container.hidden, true);
+});
+
+test('S2 and S3 workspace summary separates batch vs emotion timing, shows unmeasured honestly, and protects blind mode', () => {
+  const sample = {
+    scope: 'current_review_workspace',
+    blind: false,
+    scene_mode: 'warn',
+    review: {
+      total_candidates: 3,
+      superseded_excluded: 1,
+      by_origin: { automatic: 2, manual: 1 },
+      by_status: { pending: 1, accepted_total: 1, accepted: 0, accepted_edited: 1, hold: 1, rejected: 0 },
+      scene_warnings: { has_cuts: 1, no_cuts: 2, unavailable: 0, failed: 0, not_analyzed: 0 },
+      timing: { total_active_seconds: 18.5, seconds_per_accepted: 18.5, coverage: 'complete' },
+    },
+    latest_batch_run: {
+      run_id: 'r1',
+      finished_at: '2026-11-23T22:00:00+00:00',
+      video_workers: 1,
+      video_count: 1,
+      batch_wall_seconds: 2.34,
+      processed_duration_seconds: 12.0,
+      batch_rtf: 0.195,
+      executed_videos_rtf: 0.195,
+      stage_summary: {
+        download: { cached_videos: 1, executed_videos: 0, executed_seconds_sum: null },
+        scene: { cached_videos: 0, executed_videos: 1, executed_seconds_sum: 0.75 },
+      },
+    },
+    latest_emotion_run: {
+      separate_from_batch: true,
+      run_tag: 'howru-emotion2vec-mean-v1',
+      candidates: 9,
+      text_seconds_sum: 1.5,
+      audio_seconds_sum: 2.5,
+      combined_seconds_sum: 4.0,
+    },
+  };
+
+  const view = workspaceSummaryView(sample);
+  assert.match(view.reviewItems[0], /자동 2 · 직접 추가 1/);
+  assert.match(view.reviewItems[1], /수정 후 채택 1/);
+  assert.match(view.reviewItems[2], /18\.5초/);
+  assert.match(view.reviewItems[3], /대체 후보 1건/);
+  assert.match(view.batchView.headline, /2\.34초/);
+  assert.match(view.batchView.headline, /RTF 0\.20x/);
+  assert.equal(view.batchView.rows[0].timeText, '캐시 사용');
+  assert.equal(view.batchView.rows[4].timeText, '0.75초');
+  assert.equal(view.batchView.rows[1].timeText, '미측정');
+  assert.match(view.emotionView.detail, /별도 실행/);
+
+  const cachedBatchView = workspaceSummaryView({
+    ...sample,
+    latest_batch_run: { ...sample.latest_batch_run, batch_rtf: null, executed_videos_rtf: null, processed_duration_seconds: null },
+  });
+  assert.match(cachedBatchView.batchView.headline, /RTF 미산출/);
+
+  // Blind mode hides emotion run metadata completely.
+  const blindView = workspaceSummaryView({ ...sample, blind: true, latest_emotion_run: null });
+  assert.equal(blindView.emotionView, null);
+  assert.match(blindView.scopeNote, /독립 정답 모드/);
+
+  // Safe DOM rendering smoke check.
+  const doc = {
+    createElement: tag => ({
+      tag, children: [], ownerDocument: doc,
+      append(child) { this.children.push(child); },
+      replaceChildren() { this.children = []; },
+    }),
+  };
+  const container = doc.createElement('div');
+  renderWorkspaceSummary(container, view);
+  assert.equal(container.children.length, 2);
 });

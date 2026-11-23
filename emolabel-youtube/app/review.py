@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from uuid import uuid4
 
-from . import config, store, youtube
+from . import config, run_summary, scene, store, youtube
 from .candidate_media import clip_directory, ensure_media, media_ready
 
 
@@ -113,11 +113,20 @@ def _snapshot(folder):
     return rows
 
 
+def _with_scene_warning(folder: Path, row: dict) -> dict:
+    warning = scene.segment_warning(
+        folder, row.get("source_stamp"), row["start_s"], row["end_s"],
+        source=youtube.video_path(folder.name),
+    )
+    return {**row, "scene_warning": warning}
+
+
 def get_candidate(clip_id: str) -> dict:
-    row = _snapshot(_folder(clip_id)).get(clip_id)
+    folder = _folder(clip_id)
+    row = _snapshot(folder).get(clip_id)
     if row is None:
         raise NotFound("Unknown candidate")
-    return row
+    return _with_scene_warning(folder, row)
 
 
 def _manual_source(video_id: str) -> tuple[Path, dict, dict]:
@@ -219,7 +228,13 @@ def transcribe_candidate(clip_id: str) -> dict:
 
 
 def manual_source_context(video_id: str) -> dict:
-    return _manual_source(video_id)[2]
+    source, _, context = _manual_source(video_id)
+    folder = config.DATA_DIR / "workspace" / video_id
+    warning = scene.segment_warning(
+        folder, context.get("source_stamp"), 0.0, context["source_duration_s"],
+        source=source,
+    )
+    return {**context, "scene_warning": warning}
 
 
 def add_manual_candidate(video_id: str, payload: dict) -> dict:
@@ -262,7 +277,7 @@ def add_manual_candidate(video_id: str, payload: dict) -> dict:
                "history": [{**created, "status": "pending", "action": "manual_added", "clip_id": key}]}
         ledger[key] = row
         _persist_manual_ledger(folder, ledger, meta, video_id, duration, context)
-        return row
+        return _with_scene_warning(folder, row)
 
 
 def _persist_manual_ledger(folder, ledger, meta, video_id, duration, context):
@@ -355,7 +370,7 @@ def list_candidates(blind=False) -> list[dict]:
         for folder in sorted(workspace.iterdir()):
             if folder.is_dir() and VIDEO_ID.fullmatch(folder.name):
                 for row in _snapshot(folder).values():
-                    row = {**row, "model_disagreement": False}
+                    row = _with_scene_warning(folder, {**row, "model_disagreement": False})
                     row.pop("model_suggestions", None)
                     if blind:
                         row = blind_candidate(row)
@@ -367,6 +382,18 @@ def list_candidates(blind=False) -> list[dict]:
                             row["model_disagreement"] = all(labels) and labels[0] != labels[1]
                     rows.append(row)
     return sorted(rows, key=lambda row: (not row["model_disagreement"], row["video_id"], row["start_s"]))
+
+
+def workspace_summary(blind=False) -> dict:
+    """Return S2 batch/emotion timing and S3 current review status without leaking blind labels."""
+    workspace = config.DATA_DIR / "workspace"
+    rows = []
+    if workspace.is_dir():
+        for folder in sorted(workspace.iterdir()):
+            if folder.is_dir() and VIDEO_ID.fullmatch(folder.name):
+                for row in _snapshot(folder).values():
+                    rows.append(_with_scene_warning(folder, row))
+    return run_summary.build_workspace_summary(workspace, rows, blind=blind)
 
 
 def _require_owner(directory, revision):
@@ -544,4 +571,4 @@ def save_decision(clip_id: str, payload: dict) -> dict:
         })
         stage.rename(folder / "review-transaction")
         _finish_transaction(folder)
-        return row
+        return _with_scene_warning(folder, row)
