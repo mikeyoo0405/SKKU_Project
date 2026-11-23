@@ -1,8 +1,8 @@
 # EmoLabel 자동화 구축 계획 (Status)
 
 - 작성일 2026-11-21 (KST) · 문서 역할: **Status** (현황·합의 기준·열린 체크리스트·기각 목록·최신 인계 5건)
-- 현재 단계 · `feat/phase-3`의 모델 연결·50:50 평균 결합·점수 비교 표 및 **3.5단계 · 수동 구간 추가(전사 보조 포함)** 구현과 ECC 3단계 점검·코드 리뷰(Windows 비HTTP Python 142개·Node 13개 PASS) 완료. 사용자 제공 Ubuntu 출력으로 두 모델의 실제 후보 9건 추론·평균 점수 생성과 기존 화면 표시를 확인했다(독립 정답 기반 정확도·새 표 UI 및 수동 추가/전사 보조의 실제 Ubuntu 브라우저 저장·HTTP 6개 테스트는 미확인). 커밋·푸시는 사용자 GATE 2 확인 후 진행한다. 4단계의 팀원 프로그램 비교 목적은 유지한다.
-- 관련 정본 문서 · 규칙 [AGENTS.md](AGENTS.md), 코드 지도 [README.md](README.md), 실행 안내 [emolabel-youtube/README.md](emolabel-youtube/README.md), 상세 이력 [docs/PILOT_LOG.md](docs/PILOT_LOG.md)·[docs/HANDOFF_LOG.md](docs/HANDOFF_LOG.md), [라벨링 가이드](emolabel-youtube/docs/ANNOTATION_GUIDE.md)
+- 현재 단계 · `feat/phase-3`의 **3단계(모델 연결·50:50 평균 결합·점수 비교 표)**와 **3.5단계(수동 구간 추가·전사 보조)** 구현·ECC 점검(`click-path-audit`·`/fastapi-review`·`code-review`·`verification-loop`)·로컬 검증(Windows 비HTTP Python 142개·Node 13개 PASS) 및 원격 커밋·푸시(`5320846` → `origin/feat/phase-3`) 완료. 현재 작업 브랜치는 `5320846`에서 분기한 `feat/advance`이며, 팀원용 사용 가이드([docs/WORKFLOW_GUIDE.md](docs/WORKFLOW_GUIDE.md))와 팀원 프로그램 장점 도입 제안안([docs/TEAM_ADVANTAGES_PLAN.md](docs/TEAM_ADVANTAGES_PLAN.md), 검토 대기·미착수)이 미커밋 상태로 추가되어 있다. 남은 실환경 확인은 WSL2 Ubuntu 동기화 후 HTTP 6개 테스트 포함 148개 실행과 실제 브라우저 수동 추가·전사·저장·재실행 보존 확인이며, 이어서 4단계(팀원 프로그램 비교)로 넘어간다.
+- 관련 정본 문서 · 규칙 [AGENTS.md](AGENTS.md), 코드 지도 [README.md](README.md), 실행 안내 [emolabel-youtube/README.md](emolabel-youtube/README.md), 팀원 가이드 [docs/WORKFLOW_GUIDE.md](docs/WORKFLOW_GUIDE.md), 개선 제안안 [docs/TEAM_ADVANTAGES_PLAN.md](docs/TEAM_ADVANTAGES_PLAN.md), 라이선스·권한 안내 [docs/LICENSES_AND_RIGHTS.md](docs/LICENSES_AND_RIGHTS.md), 상세 이력 [docs/PILOT_LOG.md](docs/PILOT_LOG.md)·[docs/HANDOFF_LOG.md](docs/HANDOFF_LOG.md), [라벨링 가이드](emolabel-youtube/docs/ANNOTATION_GUIDE.md)
 
 ## 목표와 구현 원칙
 
@@ -20,7 +20,7 @@
 | 후보 선정 | 선정 v3: 원래 ASR 경계를 보존하고 짧은 VAD 경계 확장(≤ 0.5초, 0.08초 여백 클램프)·긴 발화 경고, 발화 비율·여백·미해결 경계 위험으로 최대 3개 선정 | Ubuntu 개별 사례 전후 청취·감소율 확인 |
 | 감정 사전 분류 | `prelabels.json` 초안, R1 진단, 기존 엄격 일치 호환, 확정한 두 모델 어댑터·50:50 평균 결합·점수 표시 구현 | 모델 설치 후 Ubuntu 실추론·연결 보고서·브라우저 확인 |
 | 사람 검수 | 후보별 파형·재생·선택 구간 자동 정지, 검수 큐, 사유, 단축키, 독립 검수, 유휴 제외 타이머 | 파일럿 4개 상태 저장·철회 및 작업 시간 실측 |
-| 수동 구간 추가 (3.5단계) | 원본 새 구간 선택·독립 `pending` 후보 추가(`reviews.json` 영속)·출처/초안 보호·무후보 URL 경로·기존 검수/저장 연결 구현 및 자동 검사 통과 | Ubuntu 실제 브라우저 추가→재생→저장→재실행 보존 및 HTTP 테스트 확인 |
+| 수동 구간 추가 (3.5단계) | **구현·커밋·푸시 완료 (`5320846`)** · 원본 새 구간 선택·독립 `pending` 후보 추가(`reviews.json` 영속)·배치 `asr.json` 초안/단건 전사(`POST /{clip_id}/transcribe`)·출처/초안 보호·무후보 URL 경로·기존 검수/저장 연결 및 로컬 자동 검사(Python 142·Node 13) 통과 | Ubuntu 동기화 후 HTTP 6개 포함 148개 테스트 및 실제 브라우저 추가→전사→재생→저장→재실행 보존 확인 |
 | 확정 저장·평가 | 작업 공간/확정 출력 분리, 경계 수정 이력·철회 격리·재실행 보호, R0·R3 오프라인 진단·평가 도구 구현 | 기존 자료와 함께 Ubuntu 검증, 독립 정답 기반 최종 비교 |
 
 ## 데이터·상태 계약 (구현 공통 기준)
@@ -120,6 +120,13 @@
 
 근거 확인일은 2026-11-22이며, 모델 카드와 [emotion2vec 공식 저장소](https://github.com/ddlBoJack/emotion2vec)의 점수 출력 계약을 확인했다. 모델 카드 성능 수치를 이 프로젝트의 정확도로 취급하지 않는다.
 
+### 검수 화면 점수 비교 표 정리 (2026-11-22)
+
+- 사용자 요청: 한 문단에 나열된 모델 점수를 감정별 비교 표로 정리한다. (`static/review.mjs`, `static/app.js`, `static/index.html`, `static/style.css`, `test_review_ui.mjs`)
+- 완료 기준: 평균/결합 제안과 한국어 보류 사유가 명확하고, 5감정 × 대사/음성/평균 점수를 비교할 수 있다. 실패·누락 점수는 0 대신 대시로 표시한다. 블라인드·대사/경계 수정 시 숨김과 사람 감정 미선택 상태를 유지한다.
+- [x] 구현·자동 검증 완료: Node UI/재생 12개·Python portability 7개, JS 구문·UTF-8/LF·diff 검사 통과(`5320846` 포함).
+- [ ] Ubuntu 실제 화면 적용(강력 새로고침)·저장 확인.
+
 ## 3.5단계 · 수동 구간 추가
 
 **목표**: 자동 선정에서 빠진 좋은 발화를 사람이 원본 영상에서 찾아 독립적인 검수 후보로 추가한다. 기존 후보의 경계 수정과 새 후보 추가를 구분한다. 기존 수동 영상 로딩·추출 기능을 검토해 배치 검수에서도 같은 흐름을 사용할 수 있게 연결한다.
@@ -158,7 +165,7 @@
 - [x] 자동 후보 고정 manifest와 기존 모델 결과를 바꾸지 않는다. 수동 후보 출처를 표시하고 자동/수동 건수와 사람 시간의 구분을 확인한다.
 - [ ] Python 후보 추가/저장·API·회귀 검사와 Node 추가/취소/입력 보호 검사를 통과한다. Windows에서 비HTTP Python 142개(수동 추가·전사 보조 17개·portability 7개 포함)·Node 13개 통과. Windows 샌드박스 제약으로 미실행한 HTTP 6개(`test_review_api.py`) 포함 전체 `uv run python -m unittest discover -v`는 Ubuntu에서 실행한다.
 - [ ] Ubuntu 실제 원본에서 새 구간 추가 → 재생 → 대사/감정 입력 → 확정 저장 → 새로고침/재실행 후 보존을 확인한다. 기존 자동 후보 1건을 대조해 새 손상이 없음을 확인한다.
-- [ ] 3.5단계 구현·검증 결과를 기록한 후 보류한 커밋·푸시를 재개하고 4단계 팀원 워크플로우 비교로 넘어간다. 이전 커밋 시도는 로컬 `.git/index.lock` 쓰기 권한 오류로 실패했고, GitHub 도구 확인은 사용자 중단으로 완료되지 않았으므로 커밋·푸시 성공으로 기록하지 않는다.
+- [x] 3.5단계 구현·ECC 점검·로컬 검증 결과를 기록하고 보류했던 `feat/phase-3` 커밋·푸시를 완료했다(`5320846` → `origin/feat/phase-3`, 프로젝트 파일 39개; `.claude/`·`gan-harness/` 제외). Ubuntu 실환경 확인 후 4단계 팀원 워크플로우 비교로 넘어간다.
 
 ## 4단계 · 팀원 프로그램과 동일 조건 워크플로우 비교
 
@@ -198,52 +205,43 @@
 | ASR 구간 자동 병합 / LLM 기반 경계 보정 | **보류** · 화자 혼합·지연·복잡도 위험으로 R2 범위에서 제외 | 선정 v3의 제한적 VAD 확장(≤ 0.5초) + 검수 경고 플래그 | 파일럿에서 경계 수동 조정 시간이 반복 병목으로 확인될 때 별도 합의 |
 | 원시 logit 기반 모델 간 신뢰도 가중 결합 | **보류** · 보정(calibration) 검증 없이 모델 간 logit 직접 비교 불가 | 각 모델의 softmax 분포를 공통 범주로 매핑한 뒤 동일 비중 평균. 평균 점수를 보정된 확률로 부르지 않음 | 개발 표본에서 확률 보정 검증 후 |
 | Windows 샌드박스에서 `test_review_api.py` 실행 | **환경 제약** · AnyIO 로컬 소켓페어 대기로 중단됨 | WSL2 Ubuntu에서 `uv run python -m unittest discover -v`로 HTTP 6개 검증 | 환경 제약 해소 시 |
-| 보류된 확장 실험 (채널 단위 수집, 원본 타임라인 검수, PySceneDetect/AutoClip/KMSAV, 라벨 300–500건 후 LightGBM/MLP) | **보류** · 현재 1–4단계 핵심 흐름 완료 우선 | 현재 공통 파이프라인 및 단순 결합 기준선 | 핵심 파일럿 완료 및 충분한 표본(300–500건 등) 확보 후 |
-
-## 검수 화면 점수 정리 (2026-11-22)
-
-- 사용자 요청: 한 문단에 나열된 모델 점수를 감정별 비교 표로 정리한다.
-- 변경 예정: `static/review.mjs`(표 데이터·안전한 DOM 렌더링), `static/app.js`(표 연결), `static/index.html`·`static/style.css`(제안 카드·반응형 표·캐시 버전), `test_review_ui.mjs`.
-- 완료 기준: 평균/결합 제안과 한국어 보류 사유가 명확하고, 5감정 × 대사/음성/평균 점수를 비교할 수 있다. 실패·누락 점수는 0 대신 대시로 표시한다. 블라인드·대사/경계 수정 시 숨김과 사람 감정 미선택 상태를 유지한다.
-- 검증: Node UI/재생 검사, JS 구문 검사, Python portability, UTF-8/LF·diff 확인. Ubuntu 파일 교체 후 강력 새로고침으로 실제 브라우저 확인은 별도 기록한다.
-- [x] 구현·자동 검증 완료: Node UI/재생 12개·Python portability 7개, JS 구문·UTF-8/LF·diff 검사 통과. 실제 Ubuntu 새 화면 확인은 대기.
-- [ ] Ubuntu 실제 화면 적용·저장 확인.
+| 보류된 확장 실험 (채널 단위 수집, 원본 타임라인 검수, AutoClip/KMSAV, 장면 `strict` 자동 분할·제외·3초 패딩, 라벨 300–500건 후 LightGBM/MLP) | **보류** · 현재 핵심 흐름 완료 및 시연 안정성 우선 | 현재 공통 파이프라인 및 단순 결합 기준선 (2026-11-24 시연용 S1 `warn` 장면 전환 경고·S2 처리 시간 요약·S3 검수 현황 요약은 [docs/TEAM_ADVANTAGES_PLAN.md](docs/TEAM_ADVANTAGES_PLAN.md) 0절 합의로 `feat/advance`에서 구현 중, `uv.lock` 무변경) | 핵심 파일럿 완료 및 충분한 표본(300–500건 등) 확보 후 (또는 별도 제안안 승인 시) |
 
 ## 작업 인계
 
 최신 항목을 맨 위에 기록한다. 최근 5건만 유지하고 이전 기록은 [docs/HANDOFF_LOG.md](docs/HANDOFF_LOG.md)로 이동한다.
 
-### 2026-11-22 (KST) · Antigravity · 3.5단계 수동 구간 추가 마무리·보완 및 검증
+### 2026-11-23 (KST) · Codex · RTF 계산 코드 리뷰 및 수정
 
-- 단계·상태 — 3.5단계(수동 구간 추가 + 전사 보조) 구현·보완 및 ECC 점검(`click-path-audit`·`/fastapi-review`·`verification-loop`·`code-review`) 완료. 배치 `asr.json` 즉시 초안 채우기 + 선택형 `대사 자동 전사` 버튼(`POST /api/review/candidates/{clip_id}/transcribe`)까지 반영·회귀 검증했다. Ubuntu HTTP 6개 테스트와 실제 브라우저 추가/전사/저장/재실행 확인 및 GATE 2 커밋·푸시는 대기다.
-- 변경 — `feat/phase-3` 미커밋. `emolabel-youtube/app/review.py` (수동 추가·경계 통합 `_normalize_bounds`, 배치 `asr.json` 겹침 초안 `_asr_draft_for_range`, 비파괴 단건 전사 `candidate_audio_path`/`run_candidate_asr`/`transcribe_candidate`, `_manual_source()` 보강, 수동 후보 미이동 `accepted` 유지, `_snapshot()` 복구 락 확장, `_folder()` `parse_clip_id`), `emolabel-youtube/app/schemas.py` (`ReviewDecision` `strict=True`, `source_version` `min_length=1`), `emolabel-youtube/app/review_api.py` (`POST /{clip_id}/transcribe` 503 안전 처리, `_http_errors()` 손상 JSON 500 보존), `emolabel-youtube/static/review.mjs` (`canTranscribeCandidate`·`normalizeBoundsMs`·`canStartAddition` `wsReady`·`restoreReviewFields`·`canUseEmotionShortcut` 등), `emolabel-youtube/static/app.js`·`index.html` (`#transcribe-btn`·`?v=manual-add3`, `wsReady` 레이스 및 소수점 끝단 반올림 수정), `test_manual_candidates.py` (17개)·`test_review_api.py` (6개)·`test_review_ui.mjs` (13개), `README.md`·`emolabel-youtube/README.md`·`PLAN.md`·`docs/HANDOFF_LOG.md` 갱신. 이전 인계 1건을 `docs/HANDOFF_LOG.md`로 이동.
-- 검증 — Windows Python 3.14 비HTTP 전체 **142/142 PASS**(`test_manual_candidates` 17개·`test_portability` 7개 포함), Node **13/13 PASS**(`test_review_ui.mjs`·`test_boundary_playback.mjs`), Python 42개 `py_compile`·JS 4개 `node --check`·39개 프로젝트 파일 UTF-8/LF(`CRLF: 0`)·시크릿/개인경로/console.log 0건 확인. Windows `uv`·`ruff`·`pyright` 부재, `test_review_api.py`(HTTP 6개)는 Windows 샌드박스 `TestClient` 제약, 실제 브라우저·Ubuntu Whisper 전사/재실행 확인은 WSL 미실행으로 NOT PERFORMED (WSL2 재현: `cd emolabel-youtube && uv run python -m unittest -v test_portability && uv run python -m unittest discover -v && node --test test_review_ui.mjs test_boundary_playback.mjs`).
-- 다음 작업 — 사용자 GATE 2 확인 후 `feat/phase-3` 커밋·푸시(`.claude/`·`gan-harness/` 제외) → Ubuntu 동기화 및 전체 148개 Python 테스트 + Node 13개 + 실제 브라우저 수동 구간 추가/대사 자동 전사/저장/재실행 보존 확인 → 4단계 팀원 워크플로우 비교 진행.
+- 단계·상태 — 시연용 S2 RTF가 실제 발화 분석을 실행한 영상으로 계산되도록 검토·수정했다.
+- 변경 — `feat/advance` 미커밋. 장면 분석만 실행하거나 미디어만 다시 추출한 영상은 RTF 계산에서 제외했다. 이전 배치 기록의 처리 시간은 읽을 수 있으며, 기존 기준으로 저장된 RTF만 숨긴다. 회귀 검증을 보강했다.
+- 검증 — Windows Python 비HTTP 155개 및 Node UI/재생 15개 통과. WSL 접근 거부로 Ubuntu HTTP·실영상·브라우저 확인 대기. [시연 기능 재현 명령](docs/TEAM_ADVANTAGES_PLAN.md#시연-기능-재현-명령) 참고.
+- 다음 작업 — Ubuntu에서 첫 배치 분석과 장면 분석만 보완하는 배치를 비교해 RTF 표시를 확인한다.
 
-### 2026-11-22 (KST) · Codex · 3.5단계 수동 구간 추가 계획
+### 2026-11-23 (KST) · Antigravity · S2 RTF 계산·표시 및 라이선스·권한 문서 보완
 
-- 단계·상태 — 사용자가 수동 구간 추가를 3.5단계로 배치하도록 요청해 목표·흐름·데이터 보호·변경 파일·완료 기준을 PLAN에 작성했다. 이번 작업은 계획만 해당하며 기능 구현은 시작하지 않았다. 기존 3단계 결과를 보존하고 커밋·푸시는 3.5단계 구현·검증 후 재개한다.
-- 변경 — `feat/phase-3` 미커밋. 이번 변경은 `PLAN.md`와 이전 인계 이동을 위한 `docs/HANDOFF_LOG.md`뿐이다. 새 구간 선택→독립 pending 후보→사람 검수/확정 저장, 직접 추가 출처, 취소/실패 시 입력 보존, 중복 차단·영상별 잠금·재실행 보존, 자동 후보 없음 시 수동 시작, 기존 original_asr 평가 입력 분리를 계획했다. 기존 코드와 다른 도구의 변경은 보존했다.
-- 검증 — 현재 후보/검수/스키마/UI 구조를 이전 읽기 결과와 대조하고 문서 단계 순서·완료 기준·UTF-8/LF·diff·인계 최근 5건을 확인했다. 코드 변경이 없어 자동 검사는 재실행하지 않았다. Ubuntu 새 기능 검증은 미구현이므로 미실행이며, 구현 후 `cd emolabel-youtube && uv run python -m unittest -v test_portability && uv run python -m unittest discover -v && node --test test_review_ui.mjs test_boundary_playback.mjs`와 실제 추가/저장/재실행 절차로 확인한다.
-- 다음 작업 — 3.5단계 계획에 따라 후보 추가 API·영속 저장부터 구현하고 UI 추가/취소 모드를 연결한다. 로컬 git add는 `.git/index.lock` 권한 오류로 실패했으며 원격 커밋/푸시는 완료되지 않았다. 재개 시 권한 또는 사용 가능한 GitHub 연결 경로를 확인한다.
+- 단계·상태 — 팀원 프로그램(`emolabel2`) 대비 시연 보완 2건(S2 RTF 계산·표시, 오픈소스·모델 라이선스 및 데이터 권한 안내 문서 신설) 구현 및 Windows 로컬 검증 완료. Ubuntu 실환경 검증은 대기.
+- 변경 — `feat/advance` 미커밋. `emolabel-youtube/app/run_summary.py`(영상별 `rtf`, 비캐시 전체 `batch_rtf`·부분 `executed_videos_rtf`, 캐시 실행 시 `None` 유지), `static/review.mjs`·`app.js`·`index.html`(S2 요약 헤더 RTF/미산출 표시, `?v=demo-s123-rtf1`), `test_run_summary.py`·`test_review_ui.mjs`(전체/캐시/혼합 실행 RTF 회귀 테스트 추가), [docs/LICENSES_AND_RIGHTS.md](docs/LICENSES_AND_RIGHTS.md) 신설 및 [README.md](README.md)·[PLAN.md](PLAN.md) 등록. 이전 인계 1건을 [docs/HANDOFF_LOG.md](docs/HANDOFF_LOG.md)로 이동.
+- 검증 — Windows Python 3.14 비HTTP 전체 **155/155 PASS**, Node **15/15 PASS**, Python 46개 `py_compile`·JS `node --check`·문서 12개+변경 파일 UTF-8/LF(`CRLF: 0`)·상대 링크 깨짐 0건·`git diff --check` 통과. HTTP 7개(`test_review_api.py`)와 Ubuntu 실제 영상/브라우저 확인은 미실행([시연 기능 재현 명령](docs/TEAM_ADVANTAGES_PLAN.md#시연-기능-재현-명령) 참고).
+- 다음 작업 — `feat/advance` 변경분 Ubuntu 동기화 후 `uv pip install scenedetect` 및 전체 Python 162개(HTTP 7개 포함)·Node 15개·실제 브라우저(장면 경고·RTF·요약 패널·저장 보존) 확인.
 
-### 2026-11-22 (KST) · Codex · Phase 3 커밋·푸시 검토
+### 2026-11-23 (KST) · Codex · 시연 기능 코드 리뷰 및 수정
 
-- 단계·상태 — 사용자가 구현 마무리로 판단하고 커밋·푸시를 명시적으로 요청했다. 코드·문서 36개를 검토하고 최종 로컬 검증을 통과했다. 실모델 9건 추론·기존 UI 표시는 사용자 출력/스크린샷으로 확인했으며, 새 표 UI의 실제 저장·확정본 보존과 Ubuntu HTTP 포함 전체 검사는 별도 미확인 항목으로 유지한다.
-- 변경 — `feat/phase-3`의 모델 어댑터·평균 결합·보수적 경계 보정·검수 제안 표·오프라인 평가·회귀 검사 및 문서를 함께 마감한다. 저장소 기존 형식에 맞춘 커밋 제목은 `feat: implement phase 3 emotion prelabeling`, 푸시 대상은 `origin`(`mikeyoo0405/SKKU_Project`)의 `feat/phase-3`다. `.claude/`·`gan-harness/`·모델 가중치·미디어·라벨 데이터·비밀 설정은 포함하지 않는다. 최종 커밋/원격 상태는 Git 기록과 푸시 결과로 확인한다.
-- 검증 — Windows Python 3.14 비HTTP 전체 125/125 PASS(5.205초), Node UI/재생 12/12 PASS(79ms), JS 구문 2개·대상 Python 구문·36개 UTF-8/LF·비밀 패턴·diff 검사 PASS. Windows uv 부재로 Python 직접 실행. HTTP 5개는 앞서 확인된 Windows TestClient 제약으로 Ubuntu 검증 대기이며 이번에 반복하지 않았다.
-- 다음 작업 — 커밋·푸시 후 Ubuntu에서 변경분을 보존하며 최신 브랜치 동기화, `uv run python -m unittest discover -v`와 `node --test test_review_ui.mjs test_boundary_playback.mjs` 및 실제 화면 저장 확인. 이후 합의한 팀원 워크플로우 비교를 진행한다.
+- 단계·상태 — 시연용 S1 장면 전환 경고, S2 처리 시간, S3 검수 요약을 검토했다. Windows 자동 회귀를 통과했고 Ubuntu 실환경은 확인 대기다.
+- 변경 — `feat/advance` 미커밋. `app/scene.py`, `app/review.py`, `tools/run_batch.py`에서 분석 오류를 격리하고 이전 원본·설정의 장면 결과를 숨겼다. `app/run_summary.py`에서 부분 측정의 채택당 시간, 손상된 추론 메타데이터, 동시 기록 임시 파일을 처리했다. 웹 요약은 세션이 바뀌면 이전 응답을 무시한다. `test_run_summary.py`에 회귀 검사를 추가했다.
+- 검증 — Windows Python 3.14 비HTTP 154개, portability 7개(154개에 포함), Node UI/재생 15개 통과. HTTP 7개는 TestClient가 20초 내 응답하지 않아 중단했다. WSL 접근이 E_ACCESSDENIED이고 Windows에 PySceneDetect가 없어 실제 감지와 브라우저는 확인하지 못했다. [시연 기능 재현 명령](docs/TEAM_ADVANTAGES_PLAN.md#시연-기능-재현-명령) 참고.
+- 다음 작업 — Ubuntu에서 PySceneDetect를 설치하고 warn 모드로 실제 영상 1개의 장면 경고, 캐시 시간, 검수·저장 흐름을 확인한다.
 
-### 2026-11-22 (KST) · Codex · 모델 점수 비교 표 UI
+### 2026-11-23 (KST) · Antigravity · 문서 거버넌스 정비 및 2026-11-24 시연용 S1·S2·S3 구현
 
-- 단계·상태 — 사용자 스크린샷에서 기존 모델 제안 표시를 확인했고 화면 정리 요청에 따라 평균/결합 제안·한국어 보류 사유·감정별 비교 표로 변경했다. 사람 확정 저장은 아직 미확인이다.
-- 변경 — `feat/phase-3` 미커밋. `static/review.mjs`(표 view와 textContent 기반 DOM), `static/app.js`(렌더러 연결), `static/index.html`(section·캐시 버전), `static/style.css`(4열 표·제안 행/최고 점수 강조), `test_review_ui.mjs`, PLAN·인계 갱신. 대사/음성/평균 점수와 기타 질량은 그대로 표시하고 실패/누락은 대시로 표시한다. 기존 미커밋 변경과 모델·사람 라벨 데이터는 보존했다.
-- 검증 — Windows Node UI/재생 12개 PASS(89ms), Python 3.14 `python -B -m unittest -q test_portability` 7개 PASS(0.062초), JS 2개 구문·변경 UI 5개 UTF-8/LF·diff PASS. DOM 계약 검사로 5행·4열·제안 행 강조·한국어 이유·문자열 안전 렌더링·블라인드/대사/경계 변경 시 숨김·사람 라벨 미선택 유지 확인. 실제 브라우저 새 레이아웃은 미실행(로컬 Playwright 없음, WSL 접근 제약). 화면 변경만 있어 모델 추론은 재실행하지 않았다.
-- 다음 작업 — Ubuntu 복사본에 `static/app.js`, `static/review.mjs`, `static/index.html`, `static/style.css` 4개를 반영하고 Ctrl+Shift+R로 새로고침해 실제 좁은 화면과 저장 동선을 확인한다. 기존 추론 결과를 재사용하며 재추론은 필요 없다. Ubuntu에서 `uv run python -m unittest -v test_portability`와 `node --test test_review_ui.mjs test_boundary_playback.mjs`(테스트 파일도 동기화 시)를 실행한다.
+- 단계·상태 — `living-docs-governance` 문서 11개 점검·오류 수정 완료 후, 사용자 합의로 [docs/TEAM_ADVANTAGES_PLAN.md](docs/TEAM_ADVANTAGES_PLAN.md) 0절(**S1 장면 전환 경고 · S2 처리 시간 요약 · S3 검수 현황 요약**) 구현 및 Windows 로컬 자동 검증 완료. 기존 3.5단계 완료 상태·`uv.lock`·`annotation.json` 저장 형식은 변경하지 않았다. Ubuntu 실환경 HTTP 포함 159개 테스트·실제 PySceneDetect·브라우저 확인은 대기다.
+- 변경 — `feat/advance` 미커밋(`5320846` 기반). 코드: 신규 `emolabel-youtube/app/scene.py`(PySceneDetect `AdaptiveDetector` 지연 import·`scene.json` 캐시·5상태 경고), `app/run_summary.py`(S2 마지막 배치 wall time/단계 실행·캐시·별도 감정 추론 시간 및 S3 현재 검수 현황·중복 없는 활성 시간 집계), `test_scene.py`(6개)·`test_run_summary.py`(4개); 수정 `app/config.py`·`.env.example`(`EMOLABEL_SCENE_MODE=off|warn`), `tools/run_batch.py`(기존 완료 후보 ASR/VAD 재실행 없이 `scene.json` 보완 및 `last-batch-run.json` 저장), `app/review.py`·`app/review_api.py`·`app/main.py`(`scene_warning` 조회/수동 추가/경계 수정 재계산 및 `GET /api/review/summary`), `static/review.mjs`·`app.js`·`index.html`·`style.css`(장면 경고·컷 이동 버튼·요약 패널·`?v=demo-s123`), `test_review_api.py`(HTTP 7개)·`test_review_ui.mjs`(15개). 문서: `README.md`·`emolabel-youtube/README.md`·`PLAN.md`·`docs/HANDOFF_LOG.md`·`docs/TEAM_ADVANTAGES_PLAN.md`·`docs/WORKFLOW_GUIDE.md` 및 CRLF 3파일 LF 정규화.
+- 검증 — Windows Python 3.14 비HTTP 전체 **152/152 PASS (17.71s)**(`test_scene` 6·`test_run_summary` 4·`test_portability` 7 포함), Node **15/15 PASS (96.5ms)**, Python 46개 `py_compile`·JS 4개 `node --check`·문서 11개+변경 코드 전부 UTF-8/LF(`CRLF: 0`)·상대 링크 깨짐 0건·`git diff --check` 통과. HTTP 7개(`test_review_api.py`)는 Windows 샌드박스 `TestClient` 제약, 실영상 PySceneDetect·브라우저는 Ubuntu 실환경 미실행으로 대기. [시연 기능 재현 명령](docs/TEAM_ADVANTAGES_PLAN.md#시연-기능-재현-명령) 참고.
+- 다음 작업 — `feat/advance` 변경분을 Ubuntu에 동기화하고 `uv pip install scenedetect` 후 전체 159개 Python 테스트 + Node 15개 + `EMOLABEL_SCENE_MODE=warn` 배치·브라우저(컷 이동·요약 패널·독립 모드·수동 추가/저장 보존)를 확인해 시연 영상을 준비한다.
 
-### 2026-11-22 (KST) · Codex · Ubuntu 최종 모델 실추론 결과 확인
+### 2026-11-23 (KST) · Codex · 사용자 완료 확인 및 세션 저장
 
-- 단계·상태 — 사용자 제공 실제 Ubuntu 출력으로 HowRU·emotion2vec+ base의 9건 추론과 평균 점수 생성 성공 확인. 결합 제안 4건·other 보류 5건, 모델 실행 실패 0건. 브라우저·사람 확정 저장과 독립 정답 기반 품질 평가는 대기.
-- 변경 — `feat/phase-3` 미커밋. 이번에는 PLAN·PILOT_LOG·HANDOFF_LOG 문서만 갱신했다. 다른 도구의 최신 코드 리뷰 변경과 모든 미커밋 코드를 보존했다.
-- 검증 — 사용자 전달 run_id `e7c5793886344b789c686dec307ec207`, input_errors 0, text ok 5/보류 4, audio ok 4/보류 5, combined ok 4/보류 5. 9건 평균 분포와 선택 감정/other 보류가 일치함을 출력으로 확인했다. 원본 결과 파일 직접 열람·추론 재실행은 하지 않았고 정확도로 해석하지 않았다. 문서 변경이므로 코드 검사는 재실행하지 않았다. UTF-8/LF·diff·최신 인계 5건 확인.
-- 다음 작업 — 같은 모델 설정을 적용한 Ubuntu 터미널에서 `uv run uvicorn app.main:app --host 127.0.0.1 --port 8000` 실행, 배치 후보 검수에서 제안/점수 표시와 사람 확정 저장·보존 확인. Ubuntu `uv run python -m unittest discover -v`와 `node --test test_review_ui.mjs test_boundary_playback.mjs`도 확인한다.
+- 단계·상태 — 사용자 재확인에 따라 3.5단계는 구현 완료로 유지한다. HEAD와 원격 추적 브랜치가 `5320846`으로 일치함을 확인했다. 이전 대화의 구현 중 상태는 현재 상태로 사용하지 않는다.
+- 변경 — 이번에는 세션 스냅샷(`.claude/session-data/2026-11-23-phase35-complete-codex-session.tmp`) 및 PLAN 인계·이전 인계 보관만 갱신했다. 기존 미커밋 문서와 팀원 가이드를 보존했고 코드·커밋·푸시는 변경하지 않았다.
+- 검증 — Git 상태·최근 커밋·문서 diff 확인. Python 142개·Node 13개 PASS는 직전 기록이며 이번에 재실행하지 않았다. Ubuntu HTTP 포함 전체 검사와 브라우저 수동 추가/전사/저장/보존 확인은 남은 검증으로 구분했다.
+- 다음 작업 — Ubuntu 변경분 보존·브랜치 동기화 → Python 전체 148개/Node 검사 및 실제 브라우저 확인 → 4단계 팀원 프로그램 비교. 세션 파일의 Exact Next Step을 참고한다.

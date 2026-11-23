@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EmoLabel · Korean SER</title>
-  <link rel="stylesheet" href="/static/style.css?v=manual-add3">
+  <link rel="stylesheet" href="/static/style.css?v=demo-s123-rtf1">
 </head>
 <body>
   <header id="loader-bar">
@@ -37,6 +37,11 @@
     </label>
     <span id="queue-count" class="dim"></span>
   </section>
+
+  <details id="summary-panel" class="summary-panel hidden">
+    <summary>처리 시간 · 검수 현황 요약</summary>
+    <div id="summary-body"></div>
+  </details>
 
   <main id="workspace" class="hidden">
     <section id="media-zone">
@@ -98,6 +103,7 @@
             <span class="mono">길이 <b id="region-dur">–</b></span>
           </span>
         </div>
+        <section id="scene-warning" class="scene-warning" aria-label="장면 전환 경고" hidden></section>
       </div>
 
       <section id="manual-add-controls" class="manual-add-controls" aria-label="새 구간 추가" hidden>
@@ -220,6 +226,6 @@
     </section>
   </main>
 
-  <script type="module" src="/static/app.js?v=manual-add3"></script></script>
+  <script type="module" src="/static/app.js?v=demo-s123-rtf2"></script>
 </body>
 </html>

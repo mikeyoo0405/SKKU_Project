@@ -4,8 +4,9 @@ import {
   ActiveClock, bindPlaybackEvents, canStartAddition, canTranscribeCandidate,
   canUseEmotionShortcut, candidateLabel, enforceSelection, isShortcutBlocked,
   normalizeBoundsMs, playSelection, queueRows, queueSummaryText,
-  renderSuggestions, restoreReviewFields, suggestionView,
-} from './review.mjs?v=manual-add3';
+  renderSceneWarning, renderSuggestions, renderWorkspaceSummary,
+  restoreReviewFields, sceneWarningView, suggestionView, workspaceSummaryView,
+} from './review.mjs?v=demo-s123-rtf2';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -28,6 +29,8 @@ const el = {
   manualAddBtn: $('#manual-add-btn'), manualCreateBtn: $('#manual-create-btn'),
   manualCancelBtn: $('#manual-cancel-btn'), manualControls: $('#manual-add-controls'),
   manualStatus: $('#manual-add-status'),
+  sceneWarning: $('#scene-warning'),
+  summaryPanel: $('#summary-panel'), summaryBody: $('#summary-body'),
   actor: $('#actor'), notes: $('#notes'), annotatorId: $('#annotator-id'),
   saveBtn: $('#save-btn'), discardBtn: $('#discard-btn'), saveStatus: $('#save-status'),
   clipList: $('#clip-list'),
@@ -368,7 +371,36 @@ function resetLabelPanel() {
   setStatus(el.extractStatus, '');
 }
 
+function updateCurrentSceneWarning() {
+  const sourceWarning = state.addition ? state.addition.context?.scene_warning : state.row?.scene_warning;
+  renderSceneWarning(
+    el.sceneWarning,
+    sceneWarningView(sourceWarning, state.region),
+    (cut) => {
+      if (!state.ws) return;
+      state.ws.setTime(cut);
+    },
+  );
+}
+
+let summaryRequest = 0;
+
+async function refreshSummary() {
+  if (!state.queue) return;
+  const request = ++summaryRequest;
+  const blind = el.blind.checked;
+  try {
+    const data = await api(`/api/review/summary?blind=${blind}`);
+    if (!state.queue || request !== summaryRequest || blind !== el.blind.checked) return;
+    renderWorkspaceSummary(el.summaryBody, workspaceSummaryView(data));
+    el.summaryPanel.classList.remove('hidden');
+  } catch {
+    // Summary refresh is informational; never block human review or saving.
+  }
+}
+
 function updateSaveEnabled() {
+  updateCurrentSceneWarning();
   renderSuggestions(el.modelSuggestions,
     suggestionView(state.addition ? null : state.row, el.blind.checked, state.region, el.transcript.value));
   el.manualAddBtn.disabled = !canStartAddition(state);
@@ -508,6 +540,7 @@ function clearMedia() {
 }
 
 function setQueueMode(enabled) {
+  summaryRequest++;
   state.queue = enabled;
   state.row = null;
   state.clock = null;
@@ -520,6 +553,12 @@ function setQueueMode(enabled) {
   el.preview.classList.add('hidden');
   $('#list-title').textContent = enabled ? '검수 후보' : '현재 영상의 구간';
   $('#queue-count').textContent = '';
+  el.summaryPanel.classList.add('hidden');
+  el.summaryBody.replaceChildren();
+  if (!enabled) {
+    el.summaryPanel.open = false;
+    renderSceneWarning(el.sceneWarning, null);
+  }
 }
 
 function toggleSession() {
@@ -695,6 +734,7 @@ async function startQueue() {
     el.workspace.classList.remove('hidden');
     const available = renderQueue();
     await openCandidate(available[0]);
+    void refreshSummary();
     setStatus(el.status, rows.length ? '검수 목록을 불러왔습니다.'
       : '배치를 실행하거나 상단 URL 수동 불러오기로 새 구간을 추가하세요.');
   } catch (e) {
@@ -736,6 +776,7 @@ async function saveReview() {
       el.filter.value = state.rows.some(r => r.status === 'pending' && !r.low_quality) ? 'pending' : 'quality';
     }
     await openCandidate(renderQueue()[0]);
+    void refreshSummary();
     setStatus(el.status, `${row.clip_id} 검수 결과를 저장했습니다.`, 'ok');
   } catch (e) {
     state.rows = [];
@@ -888,6 +929,7 @@ async function submitAddition() {
     state.rows = rows;
     el.filter.value = 'pending';
     await openCandidate(rows.find(row => row.clip_id === added.clip_id) || added);
+    void refreshSummary();
     setStatus(el.status, hadPrevious
       ? '직접 추가한 구간을 검수하세요. 이전 후보의 작성 내용도 보관했습니다.'
       : '직접 추가한 구간을 검수하세요.', 'ok');

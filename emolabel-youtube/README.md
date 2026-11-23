@@ -6,11 +6,11 @@ YouTube 숏츠에서 한 화자의 발화를 추출하고, 대사를 수정해 n
 
 ## 코드 가져오기
 
-이 저장소는 비공개입니다. 저장소 접근 권한이 있는 GitHub 계정으로 인증한 뒤 복제하세요.
+현재 프로젝트는 `SKKU_Project` 저장소의 `emolabel-youtube/` 하위 폴더에서 관리합니다(초기 기반은 연구실 원본 `emolabel-youtube` Mac 앱 배포본). 저장소 접근 권한이 있는 GitHub 계정으로 인증한 뒤 복제하세요.
 
 ```bash
-git clone https://github.com/yoonji4024/emolabel-youtube.git
-cd emolabel-youtube
+git clone https://github.com/mikeyoo0405/SKKU_Project.git
+cd SKKU_Project/emolabel-youtube
 ```
 
 처음 작업하기 전에 [라벨링 가이드](docs/ANNOTATION_GUIDE.md)를 읽어주세요. [GPT 활용 가이드](docs/GPT_ASSISTANCE.md)는 선택 사항이며 GPT API 연결 없이도 앱을 실행할 수 있습니다.
@@ -46,11 +46,9 @@ GPU를 쓰려면 먼저 CUDA/cuDNN 호환성을 확인한 후 별도로 설정�
 
 Homebrew의 ffmpeg와 uv가 필요합니다. 설치되어 있다면 위의 `uv sync` 이후 명령을 동일하게 사용합니다. ffmpeg/ffprobe는 PATH에서 찾습니다. 필요한 경우 `.env.example`의 경로 설정을 사용하세요.
 
-## 실행 확인 — 배포 전 마지막 단계
+## 실행 확인 — 신규 장비 최초 설치 체크리스트
 
-이 배포본은 분기/전사 형식 단위 테스트와 의존성 해석을 확인했습니다. **재훈님 Linux PC의 실제 영상 다운로드 → ASR → QC → 저장 전체 흐름은 아직 실행하지 않았습니다.**
-
-먼저 짧은 샘플 하나로 다음을 확인한 뒤 연구실 인원에게 배포합니다.
+새 Linux/Mac 장비에서 설치를 마친 뒤, 본격 수집 전에 짧은 샘플 하나로 아래 5단계를 확인합니다. 현재 프로젝트의 전체 파일럿·검증 진행 상태는 루트 [PLAN.md](../PLAN.md)를 기준으로 확인하세요.
 
 1. `ffmpeg -version`, `ffprobe -version`이 실행됨.
 2. 위의 모델 준비 명령이 성공함.
@@ -221,12 +219,12 @@ PYTHONPATH=/mnt/c/Users/<windows-user>/Desktop/산학/emolabel-youtube uv run py
 
 기존 실행기의 진단 없는 오류도 계속 읽을 수 있으며 `runner/legacy_runner_error`로 구분합니다. 진단에 예외 원문·대사·토큰·개인 경로·stderr를 넣지 않습니다. 허용되지 않은 진단 필드는 출력 오류로 처리합니다. 외부 종료 코드는 기록하지만, 종료 코드만으로 OOM 등 원인을 확정하지 않습니다.
 
-현재 Windows 체크아웃의 R1·R2 코드를 Ubuntu에 적용할 때는 아래 파일을 동기화한 후 실행하세요. 이전 R0·R3 도구와 달리 앱 모듈도 바뀌므로 `PYTHONPATH`만 지정하는 방법으로는 Ubuntu의 기존 앱 코드가 그대로 실행될 수 있습니다. Ubuntu 코드에 별도 수정이 있다면 먼저 diff를 확인해 병합하세요.
+현재 Windows 체크아웃의 최신 코드를 Ubuntu에 적용할 때는 먼저 루트 [README.md](../README.md)의 Git 동기화(`git fetch origin && git checkout -B <branch> origin/<branch>`)를 권장합니다. 미커밋 변경분을 임시로 수동 복사해야 한다면 Ubuntu 코드의 기존 diff를 먼저 확인·보존한 뒤 아래 파일을 동기화해 실행하세요. 이전 R0·R3 도구와 달리 앱 모듈도 바뀌므로 `PYTHONPATH`만 지정하는 방법으로는 Ubuntu의 기존 앱 코드가 그대로 실행될 수 있습니다.
 
 ```bash
 cd ~/projects/산학/emolabel-youtube
 emolabel_source=/mnt/c/Users/<windows-user>/Desktop/산학/emolabel-youtube
-for file in app/candidates.py app/emotion.py app/emotion_scores.py app/review.py app/review_api.py app/schemas.py static/app.js static/index.html static/review.mjs static/style.css tools/run_batch.py tools/local_emotion.py tools/scored_emotion.py tools/configure_emotion.py tools/check_emotion_connection.py tools/reproduce_boundaries.py tools/evaluate_models.py test_candidates.py test_batch.py test_boundary_reproduction.py test_boundary_playback.mjs test_emotion.py test_local_emotion.py test_scored_emotion.py test_emotion_batch.py test_emotion_review.py test_evaluate_models.py test_manual_candidates.py test_review_api.py test_review_ui.mjs; do
+for file in .env.example app/candidates.py app/config.py app/emotion.py app/emotion_scores.py app/main.py app/review.py app/review_api.py app/run_summary.py app/scene.py app/schemas.py static/app.js static/index.html static/review.mjs static/style.css tools/run_batch.py tools/emotion_batch.py tools/local_emotion.py tools/scored_emotion.py tools/configure_emotion.py tools/check_emotion_connection.py tools/reproduce_boundaries.py tools/evaluate_models.py test_candidates.py test_batch.py test_boundary_reproduction.py test_boundary_playback.mjs test_emotion.py test_local_emotion.py test_scored_emotion.py test_emotion_batch.py test_emotion_review.py test_evaluate_models.py test_manual_candidates.py test_review_api.py test_review_ui.mjs test_run_summary.py test_scene.py; do
   cp "$emolabel_source/$file" "$file"
 done
 uv run python -m unittest discover -v
@@ -247,6 +245,15 @@ uv run python -m tools.run_batch --export-candidates data/workspace/pilot-v3.jso
 - 전사 보조(선택): 배치 실행으로 `data/workspace/{video_id}/asr.json`이 이미 있으면 겹치는 구간 대사를 즉시 초안으로 채우고(없거나 독립 검수 모드면 빈 대사), 검수 화면의 **대사 자동 전사** 버튼(`POST /api/review/candidates/{clip_id}/transcribe`)으로 필요 시 해당 구간 WAV를 단건 Whisper 전사할 수 있습니다. 전사 실패·미설치 시에도 수동 추가와 직접 입력을 막지 않습니다.
 - 확정 저장 시 `data/output/{clip_id}/annotation.json`에 `candidate_origin: "manual"`과 `manual_creation`이 기록됩니다. 경계를 바꾸지 않고 대사를 입력해 `채택`으로 저장하면 `accepted` 상태를 유지합니다.
 - 관련 검증: `uv run python -m unittest -v test_manual_candidates test_review test_review_api test_portability` 및 `node --test test_review_ui.mjs test_boundary_playback.mjs`.
+
+## 장면 전환 경고(S1) · 처리 시간·검수 현황 요약(S2·S3)
+
+- **S1 장면 전환 경고 (선택 기능)**: 기본값은 `EMOLABEL_SCENE_MODE=off`이며, 활성화하려면 Ubuntu 가상환경에 PySceneDetect(`uv pip install scenedetect`)를 추가하고 `EMOLABEL_SCENE_MODE=warn`으로 배치와 웹 서버를 실행합니다.
+  - 기존 완료 후보도 ASR·VAD·다운로드를 다시 돌리지 않고 `data/workspace/{video_id}/scene.json`만 보완 생성합니다.
+  - `scenedetect` 미설치(`unavailable`)·분석 오류(`failed`)·미실행(`not_analyzed`)을 전환 없음(`no_cuts`)과 구분 표시하며 수동 검수는 그대로 진행할 수 있습니다.
+  - 수동 구간 추가나 파형 경계 조정 시 선택 구간 기준으로 장면 전환 경고가 즉시 재계산되며, 컷 시각 버튼으로 해당 위치로 바로 이동할 수 있습니다.
+- **S2·S3 요약 패널**: 배치 실행 시 `data/workspace/last-batch-run.json`에 이번 실행의 전체 wall time과 단계별 실행/캐시 여부가 기록됩니다(캐시 단계의 과거 시간이나 별도 감정 추론 시간은 합산하지 않음). 검수 화면 상단 **처리 시간 · 검수 현황 요약**(`GET /api/review/summary`)에서 자동/직접 추가·채택/보류/제외·기록된 활성 검수 시간을 함께 확인할 수 있으며, 독립 정답 모드(`blind=true`)에서는 감정·모델 관련 추론 정보를 숨깁니다.
+- 관련 검증: `uv run python -m unittest -v test_scene test_run_summary test_batch test_review test_review_api test_portability` 및 `node --test test_review_ui.mjs test_boundary_playback.mjs`.
 
 ## 작업 및 저장
 

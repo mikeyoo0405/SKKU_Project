@@ -7,12 +7,13 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import asr, config, gender, media, qc, schemas, store, youtube
-from .review_api import router as review_router
+from .review_api import router as review_router, summary_router as review_summary_router
 
 config.ensure_dirs()
 
 app = FastAPI(title=config.TOOL_NAME, version=config.TOOL_VERSION)
 app.include_router(review_router)
+app.include_router(review_summary_router)
 
 
 @app.middleware("http")

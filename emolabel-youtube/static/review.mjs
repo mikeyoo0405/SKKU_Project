@@ -82,7 +82,8 @@ export function canTranscribeCandidate(state, blind) {
 
 export function candidateLabel(row, decisionNames, fmt) {
   const prefix = row.origin === 'manual' ? '[직접 추가] ' : '';
-  return `${prefix}${row.video_id} · ${fmt(row.start_s)}–${fmt(row.end_s)}초 · ${decisionNames[row.status]}`;
+  const sceneTag = row.scene_warning?.status === 'has_cuts' ? ' · [장면 전환]' : '';
+  return `${prefix}${row.video_id} · ${fmt(row.start_s)}–${fmt(row.end_s)}초 · ${decisionNames[row.status]}${sceneTag}`;
 }
 
 export function queueSummaryText(rows, blind) {
@@ -234,4 +235,256 @@ export function bindPlaybackEvents(ws, state, button) {
     state.playingOriginal = false;
     if (repeat) playSelection(ws, state.region, true);
   });
+}
+
+const SCENE_CUT_EPSILON = 0.001;
+
+export function sceneWarningView(warning, region) {
+  if (!warning || typeof warning !== 'object') return null;
+  if (warning.status === 'not_analyzed') {
+    if (warning.reason === 'scene_mode_off') return null;
+    if (warning.reason === 'source_changed' || warning.reason === 'settings_changed') {
+      return {
+        tone: 'info',
+        label: '장면 분석 재실행 필요',
+        detail: '원본 영상 또는 분석 설정이 변경되었습니다. 배치를 다시 실행해 주세요.',
+        cuts: [],
+      };
+    }
+    return {
+      tone: 'info',
+      label: '장면 분석 미실행',
+      detail: '이 영상은 아직 장면 전환 분석이 실행되지 않았습니다.',
+      cuts: [],
+    };
+  }
+  if (warning.status === 'unavailable') {
+    return {
+      tone: 'muted',
+      label: '장면 분석 도구 미설치',
+      detail: 'PySceneDetect가 설치되지 않아 장면 전환을 확인하지 않았습니다. 수동 검수는 계속할 수 있습니다.',
+      cuts: [],
+    };
+  }
+  if (warning.status === 'failed') {
+    return {
+      tone: 'muted',
+      label: '장면 분석 실패',
+      detail: '장면 전환 분석 중 오류가 발생했습니다. 전환 없음과 구분해 직접 확인하세요.',
+      cuts: [],
+    };
+  }
+  if (warning.status === 'has_cuts' || warning.status === 'no_cuts') {
+    let cuts = Array.isArray(warning.cuts_s) ? warning.cuts_s : [];
+    if (region && Array.isArray(warning.source_cuts_s) &&
+        Number.isFinite(region.start) && Number.isFinite(region.end) && region.end > region.start) {
+      cuts = warning.source_cuts_s.filter(
+        cut => typeof cut === 'number' && Number.isFinite(cut) &&
+          cut > region.start + SCENE_CUT_EPSILON && cut < region.end - SCENE_CUT_EPSILON,
+      );
+    }
+    if (cuts.length) {
+      return {
+        tone: 'warn',
+        label: `장면 전환 ${cuts.length}회 감지`,
+        detail: '선택 구간 안에 장면 전환이 있습니다. 화자 전환·발화 잘림 여부는 영상과 원음으로 직접 확인하세요.',
+        cuts,
+      };
+    }
+    return {
+      tone: 'ok',
+      label: '선택 구간 내 장면 전환 없음',
+      detail: 'PySceneDetect AdaptiveDetector 기준 이 구간 내부에 감지된 컷이 없습니다.',
+      cuts: [],
+    };
+  }
+  return null;
+}
+
+export function renderSceneWarning(container, view, onSeek) {
+  container.replaceChildren();
+  container.hidden = !view;
+  container.className = view ? `scene-warning scene-${view.tone}` : 'scene-warning';
+  if (!view) return;
+  const doc = container.ownerDocument;
+  const header = doc.createElement('div');
+  header.className = 'scene-warning-header';
+  const title = doc.createElement('strong');
+  title.textContent = view.label;
+  header.append(title);
+  container.append(header);
+
+  const detail = doc.createElement('p');
+  detail.className = 'scene-warning-detail';
+  detail.textContent = view.detail;
+  container.append(detail);
+
+  if (view.cuts.length) {
+    const actions = doc.createElement('div');
+    actions.className = 'scene-cut-list';
+    for (const cut of view.cuts) {
+      const btn = doc.createElement('button');
+      btn.type = 'button';
+      btn.className = 'scene-cut-btn';
+      btn.textContent = `컷 ${cut.toFixed(2)}초로 이동`;
+      if (typeof onSeek === 'function' && typeof btn.addEventListener === 'function') {
+        btn.addEventListener('click', () => onSeek(cut));
+      }
+      actions.append(btn);
+    }
+    container.append(actions);
+  }
+}
+
+const STAGE_LABELS = [
+  ['download', '다운로드'],
+  ['audio', '오디오 추출'],
+  ['vad', 'VAD'],
+  ['asr', 'ASR 전사'],
+  ['scene', '장면 분석'],
+  ['candidates', '후보 선정'],
+  ['candidate_media', '클립 추출'],
+];
+
+function fmtSec(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)}초` : '미측정';
+}
+
+function stageNote(info) {
+  if (!info || typeof info !== 'object') return '미측정';
+  const parts = [];
+  if (info.executed_videos) parts.push(`실행 ${info.executed_videos}`);
+  if (info.cached_videos) parts.push(`캐시 ${info.cached_videos}`);
+  if (info.skipped_videos) parts.push(`건너뜀 ${info.skipped_videos}`);
+  if (info.unavailable_videos) parts.push(`미설치 ${info.unavailable_videos}`);
+  if (info.failed_videos) parts.push(`실패 ${info.failed_videos}`);
+  if (info.unmeasured_videos) parts.push(`미측정 ${info.unmeasured_videos}`);
+  return parts.length ? parts.join(' · ') : '미측정';
+}
+
+export function workspaceSummaryView(summary) {
+  if (!summary || typeof summary !== 'object') return null;
+  const rev = summary.review || {};
+  const byOrigin = rev.by_origin || {};
+  const byStatus = rev.by_status || {};
+  const timing = rev.timing || {};
+  const sceneCounts = rev.scene_warnings || {};
+  const coverageLabel = timing.coverage === 'complete' ? '전체 기록됨'
+    : timing.coverage === 'partial' ? '일부 미기록 포함' : '미측정';
+  const acceptedLine = byStatus.accepted_edited
+    ? `채택 ${byStatus.accepted_total || 0} (수정 후 채택 ${byStatus.accepted_edited})`
+    : `채택 ${byStatus.accepted_total || 0}`;
+
+  const reviewItems = [
+    `전체 후보 ${rev.total_candidates || 0}건 (자동 ${byOrigin.automatic || 0} · 직접 추가 ${byOrigin.manual || 0})`,
+    `미검수 ${byStatus.pending || 0} · ${acceptedLine} · 보류 ${byStatus.hold || 0} · 제외 ${byStatus.rejected || 0}`,
+    timing.total_active_seconds == null
+      ? `기록된 활성 검수 시간: 미측정 (${coverageLabel})`
+      : `기록된 활성 검수 시간: ${timing.total_active_seconds.toFixed(1)}초 (${coverageLabel}) · ${
+          timing.seconds_per_accepted == null ? '채택당 시간 산출 불가' : `채택당 ${timing.seconds_per_accepted.toFixed(1)}초`
+        }`,
+  ];
+  if (rev.superseded_excluded) {
+    reviewItems.push(`경계 수정 전 대체 후보 ${rev.superseded_excluded}건은 현재 후보·채택 수에서 제외`);
+  }
+  if (summary.scene_mode === 'warn') {
+    const otherScene = (sceneCounts.not_analyzed || 0) + (sceneCounts.unavailable || 0) + (sceneCounts.failed || 0);
+    reviewItems.push(`장면 경고: 전환 있음 ${sceneCounts.has_cuts || 0} · 전환 없음 ${sceneCounts.no_cuts || 0} · 미분석/미설치/실패 ${otherScene}`);
+  }
+
+  const batch = summary.latest_batch_run;
+  let batchView;
+  if (!batch) {
+    batchView = {
+      headline: '기록된 배치 실행 없음 (미측정)',
+      note: '배치를 실행하면 이번 실행의 wall time과 단계별 실행/캐시 여부가 표시됩니다.',
+      rows: [],
+    };
+  } else {
+    const rtfText = typeof batch.batch_rtf === 'number' && Number.isFinite(batch.batch_rtf)
+      ? ` · RTF ${batch.batch_rtf.toFixed(2)}x${
+          typeof batch.processed_duration_seconds === 'number' && Number.isFinite(batch.processed_duration_seconds)
+            ? ` (영상 ${batch.processed_duration_seconds.toFixed(1)}초)` : ''
+        }`
+      : typeof batch.executed_videos_rtf === 'number' && Number.isFinite(batch.executed_videos_rtf)
+        ? ` · 영상별 처리 시간 기준 RTF ${batch.executed_videos_rtf.toFixed(2)}x`
+        : ' · RTF 미산출';
+    batchView = {
+      headline: `마지막 배치 wall time: ${fmtSec(batch.batch_wall_seconds)} · 영상 ${batch.video_count || 0}개 · workers ${batch.video_workers || 1}${rtfText}`,
+      note: `측정 범위: 이번 실행(${batch.finished_at || batch.started_at || '시각 미상'}). RTF는 이번에 발화 분석을 실행한 영상의 길이를 기준으로 계산합니다.`,
+      rows: STAGE_LABELS.map(([key, label]) => {
+        const info = batch.stage_summary?.[key];
+        const timeText = info?.executed_seconds_sum != null
+          ? fmtSec(info.executed_seconds_sum)
+          : info?.cached_videos && !info?.executed_videos && !info?.failed_videos ? '캐시 사용' : '미측정';
+        return { label, timeText, note: stageNote(info) };
+      }),
+    };
+  }
+
+  let emotionView = null;
+  if (!summary.blind) {
+    const emo = summary.latest_emotion_run;
+    emotionView = emo
+      ? {
+          headline: `별도 감정 추론(${emo.run_tag || emo.run_id || '최근 실행'}): 후보 ${emo.candidates ?? '미측정'}건`,
+          detail: `대사 ${fmtSec(emo.text_seconds_sum)} · 음성 ${fmtSec(emo.audio_seconds_sum)} · 합계 ${fmtSec(emo.combined_seconds_sum)} (수집 배치 wall time과 별도 실행)`,
+        }
+      : {
+          headline: '별도 감정 추론 기록 없음',
+          detail: '고정 후보 감정 추론을 실행하면 수집 배치 시간과 분리해 표시합니다.',
+        };
+  }
+
+  return {
+    scopeNote: summary.blind
+      ? '현재 검수 목록 전체 현황 (독립 정답 모드 · 모델·감정 분포 비노출)'
+      : '현재 검수 목록 전체 현황 (저장된 기록 기준 · 작성 중 시간은 저장 시 반영)',
+    reviewItems,
+    batchView,
+    emotionView,
+  };
+}
+
+export function renderWorkspaceSummary(container, view) {
+  container.replaceChildren();
+  if (!view) return;
+  const doc = container.ownerDocument;
+  const add = (parent, tag, text, className) => {
+    const node = doc.createElement(tag);
+    if (text !== undefined) node.textContent = text;
+    if (className) node.className = className;
+    parent.append(node);
+    return node;
+  };
+
+  add(container, 'p', view.scopeNote, 'summary-scope');
+  const grid = add(container, 'div', undefined, 'summary-grid');
+
+  const reviewCard = add(grid, 'section', undefined, 'summary-card');
+  add(reviewCard, 'h3', '현재 검수 현황 (S3)');
+  const list = add(reviewCard, 'ul', undefined, 'summary-list');
+  for (const item of view.reviewItems) add(list, 'li', item);
+
+  const batchCard = add(grid, 'section', undefined, 'summary-card');
+  add(batchCard, 'h3', '마지막 배치 처리 시간 (S2)');
+  add(batchCard, 'p', view.batchView.headline, 'summary-headline');
+  add(batchCard, 'p', view.batchView.note, 'summary-note');
+  if (view.batchView.rows.length) {
+    const table = add(batchCard, 'table', undefined, 'summary-table');
+    const head = add(add(table, 'thead'), 'tr');
+    for (const col of ['단계', '이번 실행 시간', '실행 · 캐시 상태']) add(head, 'th', col).scope = 'col';
+    const body = add(table, 'tbody');
+    for (const row of view.batchView.rows) {
+      const tr = add(body, 'tr');
+      add(tr, 'th', row.label).scope = 'row';
+      add(tr, 'td', row.timeText);
+      add(tr, 'td', row.note);
+    }
+  }
+  if (view.emotionView) {
+    const emoBox = add(batchCard, 'div', undefined, 'summary-emotion');
+    add(emoBox, 'strong', view.emotionView.headline);
+    add(emoBox, 'p', view.emotionView.detail, 'summary-note');
+  }
 }

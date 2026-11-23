@@ -516,6 +516,63 @@ select {
 .manual-add-controls > div { display: flex; flex-wrap: wrap; gap: 8px; }
 .manual-add-controls .status { display: block; margin-top: 8px; }
 
+.scene-warning {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  font-size: 13px;
+}
+.scene-warning[hidden] { display: none; }
+.scene-warning.scene-warn {
+  border-left: 4px solid var(--warn);
+  background: #f9f3e4;
+  color: #5c4314;
+}
+.scene-warning.scene-ok {
+  border-left: 4px solid #2e7d53;
+  background: #edf6f0;
+  color: #1f5437;
+}
+.scene-warning.scene-info, .scene-warning.scene-muted {
+  border-left: 4px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--dim);
+}
+.scene-warning-detail { margin: 4px 0 0; font-size: 12px; line-height: 1.45; }
+.scene-cut-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.scene-cut-btn { font-size: 12px; padding: 4px 8px; }
+
+.summary-panel {
+  margin: 0;
+  padding: 8px 18px;
+  background: #f8f7f3;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.summary-panel summary { cursor: pointer; font-weight: 600; color: var(--accent-dark); }
+.summary-scope { margin: 8px 0 10px; font-size: 12px; color: var(--dim); }
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+  padding-bottom: 8px;
+}
+.summary-card {
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.summary-card h3 { margin: 0 0 8px; font-size: 14px; }
+.summary-list { margin: 0; padding-left: 18px; line-height: 1.6; }
+.summary-headline { margin: 0 0 4px; font-weight: 600; }
+.summary-note { margin: 0 0 8px; font-size: 12px; color: var(--dim); line-height: 1.45; }
+.summary-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.summary-table th, .summary-table td { padding: 5px 6px; border-bottom: 1px solid var(--line); text-align: left; }
+.summary-table td:nth-child(2) { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.summary-emotion { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12px; }
+
 @media (max-width: 1080px) {
   #loader-bar {
     grid-template-columns: minmax(180px, auto) minmax(280px, 1fr);
